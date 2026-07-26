@@ -30,8 +30,29 @@ function clearCloudListeners(){ cloudUnsubs.forEach(x=>x()); cloudUnsubs=[]; }
 function subscribeCloudData(uid){
   clearCloudListeners();
   const bind=(path,cb)=>{const ref=cloudDb.ref(path); const fn=ref.on('value',snap=>cb(snap.val()||{})); cloudUnsubs.push(()=>ref.off('value',fn));};
-  bind(`finance/${uid}/transactions`,v=>{state.transactions=Object.entries(v).map(([id,x])=>({id,userId:uid,...x})); localStorage.setItem('fia_transactions',JSON.stringify(state.transactions)); render();});
-  bind(`finance/${uid}/goals`,v=>{state.goals=Object.entries(v).map(([id,x])=>({id,userId:uid,...x})); localStorage.setItem('fia_goals',JSON.stringify(state.goals)); render();});
+  bind(`finance/${uid}/transactions`,v=>{
+    const remote=Object.entries(v).map(([id,x])=>({id,userId:uid,...x}));
+    const local=state.transactions.filter(x=>x.userId===uid);
+    // Não apaga lançamentos locais quando o Firebase retorna vazio por regra, atraso ou conexão.
+    if(remote.length || !local.length){
+      state.transactions=[...state.transactions.filter(x=>x.userId!==uid),...remote];
+      localStorage.setItem('fia_transactions',JSON.stringify(state.transactions));
+      render();
+    }else{
+      cloudSaveState().catch(e=>console.error('Falha ao reenviar lançamentos locais:',e));
+    }
+  });
+  bind(`finance/${uid}/goals`,v=>{
+    const remote=Object.entries(v).map(([id,x])=>({id,userId:uid,...x}));
+    const local=state.goals.filter(x=>x.userId===uid);
+    if(remote.length || !local.length){
+      state.goals=[...state.goals.filter(x=>x.userId!==uid),...remote];
+      localStorage.setItem('fia_goals',JSON.stringify(state.goals));
+      render();
+    }else{
+      cloudSaveState().catch(e=>console.error('Falha ao reenviar metas locais:',e));
+    }
+  });
   bind(`users/${uid}`,v=>{if(!v||!state.user)return; state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=isOwner()?'premium':(v.status==='ativo'?'premium':(v.plan||'free')); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render();});
   bind('settings/financeIa',v=>{state.settings={...state.settings,...v,premiumPrice:24.90}; localStorage.setItem('fia_settings',JSON.stringify(state.settings));});
   if(isOwner()){
@@ -205,13 +226,24 @@ function transactionModal(type){
   openModal(`<h2>${type==='income'?'Nova receita':'Nova despesa'}</h2><form id="transactionForm" class="form-grid"><label>Descrição<input id="txDescription" required placeholder="Ex.: Salário, mercado..." /></label><label>Valor<input id="txValue" type="text" inputmode="decimal" required placeholder="Ex.: 7.000,50" /></label><label>Categoria<select id="txCategory"><option>${type==='income'?'Salário':'Alimentação'}</option><option>${type==='income'?'Venda':'Moradia'}</option><option>${type==='income'?'Freelance':'Transporte'}</option><option>${type==='income'?'Outros':'Saúde'}</option><option>Lazer</option><option>Outros</option></select></label><label>Data<input id="txDate" type="date" value="${todayISO()}" required /></label><button class="primary" type="submit">Salvar lançamento</button></form>`);
   const txValueInput=$('txValue');
   enableLiveMoneyMask(txValueInput);
-  $('transactionForm').onsubmit=e=>{
+  $('transactionForm').onsubmit=async e=>{
     e.preventDefault();
     if(state.plan!=='premium'&&userTx().length>=Number(state.settings.freeLimit||100)){return toast('Você atingiu o limite do plano gratuito.');}
     const value=moneyInputValue(txValueInput);
     if(!Number.isFinite(value)||value<=0){txValueInput.focus();return toast('Digite um valor válido. Exemplo: 7.000,00');}
-    state.transactions.push({id:crypto.randomUUID(),userId:state.user.id,type,description:$('txDescription').value.trim(),value,category:$('txCategory').value,date:$('txDate').value,createdAt:Date.now()});
-    persist();closeModal();render();toast('Lançamento salvo com sucesso!');
+    const item={id:crypto.randomUUID(),userId:state.user.id,type,description:$('txDescription').value.trim(),value,category:$('txCategory').value,date:$('txDate').value,createdAt:Date.now()};
+    state.transactions.push(item);
+    persist();
+    try{
+      if(cloudReady){
+        const {id,userId,...data}=item;
+        await cloudDb.ref(`finance/${userId}/transactions/${id}`).set(data);
+      }
+      closeModal();render();toast(cloudReady?'Lançamento salvo no Firebase!':'Lançamento salvo neste aparelho.');
+    }catch(err){
+      console.error('Erro ao salvar lançamento no Firebase:',err);
+      closeModal();render();toast('Salvo no aparelho, mas o Firebase recusou. Verifique as regras.');
+    }
   }
 }
 function goalModal(){
