@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#07111f" />
+  <title>Finance IA Pro</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="toast" class="toast"></div>
+
+  <section id="authScreen" class="screen auth-screen">
+    <div class="brand-card">
+      <div class="logo">F<span>IA</span></div>
+      <h1>Finance IA Pro</h1>
+      <p>Controle financeiro inteligente com planejamento, metas e análise por IA.</p>
+    </div>
+
+    <div class="auth-card">
+      <div class="tabs">
+        <button class="tab active" data-auth-tab="login">Entrar</button>
+        <button class="tab" data-auth-tab="register">Criar conta</button>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <label>E-mail<input id="loginEmail" type="email" required placeholder="seu@email.com" /></label>
+        <label>Senha<input id="loginPassword" type="password" required minlength="6" placeholder="••••••••" /></label>
+        <button class="primary" type="submit">Entrar</button>
+      </form>
+
+      <form id="registerForm" class="auth-form hidden">
+        <label>Nome completo<input id="registerName" required autocomplete="name" placeholder="Seu nome completo" /></label>
+        <label>CPF<input id="registerCpf" type="text" inputmode="numeric" maxlength="14" required autocomplete="off" placeholder="000.000.000-00" /></label>
+        <label>Telefone<input id="registerPhone" type="tel" inputmode="tel" maxlength="15" required autocomplete="tel" placeholder="(00) 00000-0000" /></label>
+        <label>E-mail<input id="registerEmail" type="email" required autocomplete="email" placeholder="seu@email.com" /></label>
+        <label>Senha<input id="registerPassword" type="password" required minlength="6" autocomplete="new-password" placeholder="Mínimo 6 caracteres" /></label>
+        <label>Confirmar senha<input id="registerPasswordConfirm" type="password" required minlength="6" autocomplete="new-password" placeholder="Digite a senha novamente" /></label>
+        <label class="terms-check"><input id="registerTerms" type="checkbox" required /> <span>Li e aceito os termos de uso e a política de privacidade.</span></label>
+        <button class="primary" type="submit">Criar conta e gerar Pix</button>
+      </form>
+
+      <p class="cloud-note">Cadastro conectado ao Firebase. A mensalidade Premium é de <b>R$ 24,90</b>.</p>
+    </div>
+  </section>
+
+  <section id="appScreen" class="screen hidden">
+    <header class="topbar">
+      <div>
+        <small>Olá,</small>
+        <h2 id="userName">Usuário</h2>
+      </div>
+      <div class="top-actions">
+        <button id="notificationBtn" class="icon-btn notification-bell" title="Notificações">🔔<span id="notificationCount" class="notification-count hidden">0</span></button>
+        <button id="themeBtn" class="icon-btn" title="Alterar tema">◐</button>
+        <button id="profileBtn" class="avatar">U</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero-card">
+        <div>
+          <span>Saldo disponível</span>
+          <h1 id="balanceValue">R$ 0,00</h1>
+          <small id="monthLabel"></small>
+        </div>
+        <button id="toggleBalance" class="eye-btn">👁</button>
+      </section>
+
+      <section class="summary-grid">
+        <article class="summary income"><span>Receitas</span><strong id="incomeValue">R$ 0,00</strong></article>
+        <article class="summary expense"><span>Despesas</span><strong id="expenseValue">R$ 0,00</strong></article>
+        <article class="summary"><span>Economia</span><strong id="savingRate">0%</strong></article>
+        <article class="summary"><span>Plano</span><strong id="planName">Grátis</strong></article>
+      </section>
+
+      <section class="quick-actions">
+        <button id="addIncomeBtn"><span>＋</span>Receita</button>
+        <button id="addExpenseBtn"><span>−</span>Despesa</button>
+        <button id="goalBtn"><span>🎯</span>Meta</button>
+        <button id="aiBtn"><span>✦</span>IA Financeira</button>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h3>Visão do mês</h3><span id="monthResult">Resultado: R$ 0,00</span></div>
+        <div class="bars">
+          <div><label>Receitas</label><div class="bar"><i id="incomeBar"></i></div></div>
+          <div><label>Despesas</label><div class="bar"><i id="expenseBar"></i></div></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h3>Metas financeiras</h3><button id="newGoalLink" class="link-btn">Nova meta</button></div>
+        <div id="goalsList" class="empty-state">Nenhuma meta cadastrada.</div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><h3>Últimos lançamentos</h3><button id="viewAllBtn" class="link-btn">Ver todos</button></div>
+        <div id="transactionsList" class="transactions empty-state">Nenhum lançamento ainda.</div>
+      </section>
+
+      <section id="premiumBanner" class="premium-banner">
+        <div><b>Finance IA Premium</b><p>IA avançada, relatórios completos e lançamentos ilimitados.</p></div>
+        <button id="upgradeBtn">Assinar</button>
+      </section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button class="nav active" data-page="home">⌂<span>Início</span></button>
+      <button class="nav" data-page="transactions">⇄<span>Lançamentos</span></button>
+      <button class="nav" data-page="reports">▥<span>Relatórios</span></button>
+      <button class="nav" data-page="profile">☻<span>Perfil</span></button>
+    </nav>
+  </section>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <button id="closeModal" class="close">×</button>
+      <div id="modalContent"></div>
+    </div>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
