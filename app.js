@@ -49,7 +49,15 @@ async function cloudSaveState(){
 }
 
 const $ = id => document.getElementById(id);
-const money = value => Number(value || 0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+// Dinheiro sempre calculado em centavos para evitar erros de ponto flutuante.
+const toCents = value => {
+  const number = typeof value === 'string' ? parseBRMoney(value) : Number(value || 0);
+  return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) : 0;
+};
+const fromCents = cents => Number(cents || 0) / 100;
+const roundMoney = value => fromCents(toCents(value));
+const sumMoney = items => fromCents(items.reduce((total,item)=>total + toCents(item?.value),0));
+const money = value => roundMoney(value).toLocaleString('pt-BR',{style:'currency',currency:'BRL',minimumFractionDigits:2,maximumFractionDigits:2});
 
 // Converte valores digitados no padrão brasileiro.
 // Exemplos: 7.000 = 7000 | 7.000,50 = 7000.50 | 7000 = 7000
@@ -68,40 +76,45 @@ function parseBRMoney(value){
     normalized=raw;
   }
   const number=Number(normalized);
-  return Number.isFinite(number) ? (negative ? -number : number) : NaN;
+  return Number.isFinite(number) ? roundMoney(negative ? -number : number) : NaN;
 }
 
 function formatMoneyWhileTyping(input){
-  let raw=String(input.value || '').replace(/R\$/gi,'').replace(/\s/g,'');
-  raw=raw.replace(/[^0-9,]/g,'');
+  // Campo operando sempre em centavos:
+  // 1 -> 0,01 | 147 -> 1,47 | 14725 -> 147,25 | 1472500 -> 14.725,00
+  const digits=String(input.value || '').replace(/\D/g,'');
+  if(!digits){ input.value=''; input.dataset.cents=''; return; }
+  const safeDigits=digits.replace(/^0+(?=\d)/,'').slice(0,15) || '0';
+  const cents=Number.parseInt(safeDigits,10);
+  if(!Number.isSafeInteger(cents)){ input.value=''; input.dataset.cents=''; return; }
+  input.dataset.cents=String(cents);
+  input.value=(cents/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+  try{ input.setSelectionRange(input.value.length,input.value.length); }catch(_e){}
+}
 
-  const commaIndex=raw.indexOf(',');
-  let integerPart=commaIndex >= 0 ? raw.slice(0,commaIndex) : raw;
-  let decimalPart=commaIndex >= 0 ? raw.slice(commaIndex+1) : '';
-
-  integerPart=integerPart.replace(/\D/g,'').replace(/^0+(?=\d)/,'');
-  if(!integerPart) integerPart='0';
-  integerPart=integerPart.replace(/\B(?=(\d{3})+(?!\d))/g,'.');
-
-  decimalPart=decimalPart.replace(/\D/g,'').slice(0,2);
-  input.value=commaIndex >= 0 ? integerPart+','+decimalPart : integerPart;
+function moneyInputValue(input){
+  const stored=Number(input?.dataset?.cents);
+  if(Number.isSafeInteger(stored) && stored>=0) return fromCents(stored);
+  const digits=String(input?.value || '').replace(/\D/g,'');
+  return digits ? fromCents(Number.parseInt(digits,10)) : NaN;
 }
 
 function normalizeMoneyInput(input){
-  const value=parseBRMoney(input.value);
-  if(Number.isFinite(value)){
-    input.value=value.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
-  }
+  if(!String(input.value||'').trim()) return;
+  formatMoneyWhileTyping(input);
 }
 
 function enableLiveMoneyMask(input){
+  input.setAttribute('inputmode','numeric');
+  input.setAttribute('autocomplete','off');
   input.addEventListener('input',()=>formatMoneyWhileTyping(input));
+  input.addEventListener('paste',()=>setTimeout(()=>formatMoneyWhileTyping(input),0));
   input.addEventListener('focus',()=>{
-    if(input.value==='0,00') input.value='';
+    if(input.value==='0,00') { input.value=''; input.dataset.cents=''; }
+    setTimeout(()=>{ try{input.setSelectionRange(input.value.length,input.value.length);}catch(_e){} },0);
   });
-  input.addEventListener('blur',()=>{
-    if(input.value.trim()) normalizeMoneyInput(input);
-  });
+  input.addEventListener('blur',()=>normalizeMoneyInput(input));
+  if(String(input.value||'').trim()) formatMoneyWhileTyping(input);
 }
 const todayISO = () => new Date().toISOString().slice(0,10);
 const state = {
@@ -154,9 +167,9 @@ function showAuth(){$('appScreen').classList.add('hidden');$('authScreen').class
 
 function render(){
   const tx=userTx();
-  const income=tx.filter(t=>t.type==='income').reduce((a,b)=>a+b.value,0);
-  const expense=tx.filter(t=>t.type==='expense').reduce((a,b)=>a+b.value,0);
-  const balance=income-expense;
+  const income=sumMoney(tx.filter(t=>t.type==='income'));
+  const expense=sumMoney(tx.filter(t=>t.type==='expense'));
+  const balance=fromCents(toCents(income)-toCents(expense));
   const max=Math.max(income,expense,1);
   $('balanceValue').textContent=state.hideBalance?'R$ •••••':money(balance);
   $('incomeValue').textContent=state.hideBalance?'R$ •••••':money(income);
@@ -189,13 +202,13 @@ function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':
 
 function transactionModal(type){
   if(!canUsePremiumApp()) return paymentModal();
-  openModal(`<h2>${type==='income'?'Nova receita':'Nova despesa'}</h2><form id="transactionForm" class="form-grid"><label>Descrição<input id="txDescription" required placeholder="Ex.: Salário, mercado..." /></label><label>Valor<input id="txValue" type="text" inputmode="decimal" required placeholder="Ex.: 7.000,00" /></label><label>Categoria<select id="txCategory"><option>${type==='income'?'Salário':'Alimentação'}</option><option>${type==='income'?'Venda':'Moradia'}</option><option>${type==='income'?'Freelance':'Transporte'}</option><option>${type==='income'?'Outros':'Saúde'}</option><option>Lazer</option><option>Outros</option></select></label><label>Data<input id="txDate" type="date" value="${todayISO()}" required /></label><button class="primary" type="submit">Salvar lançamento</button></form>`);
+  openModal(`<h2>${type==='income'?'Nova receita':'Nova despesa'}</h2><form id="transactionForm" class="form-grid"><label>Descrição<input id="txDescription" required placeholder="Ex.: Salário, mercado..." /></label><label>Valor<input id="txValue" type="text" inputmode="decimal" required placeholder="Ex.: 7.000,50" /></label><label>Categoria<select id="txCategory"><option>${type==='income'?'Salário':'Alimentação'}</option><option>${type==='income'?'Venda':'Moradia'}</option><option>${type==='income'?'Freelance':'Transporte'}</option><option>${type==='income'?'Outros':'Saúde'}</option><option>Lazer</option><option>Outros</option></select></label><label>Data<input id="txDate" type="date" value="${todayISO()}" required /></label><button class="primary" type="submit">Salvar lançamento</button></form>`);
   const txValueInput=$('txValue');
   enableLiveMoneyMask(txValueInput);
   $('transactionForm').onsubmit=e=>{
     e.preventDefault();
     if(state.plan!=='premium'&&userTx().length>=Number(state.settings.freeLimit||100)){return toast('Você atingiu o limite do plano gratuito.');}
-    const value=parseBRMoney(txValueInput.value);
+    const value=moneyInputValue(txValueInput);
     if(!Number.isFinite(value)||value<=0){txValueInput.focus();return toast('Digite um valor válido. Exemplo: 7.000,00');}
     state.transactions.push({id:crypto.randomUUID(),userId:state.user.id,type,description:$('txDescription').value.trim(),value,category:$('txCategory').value,date:$('txDate').value,createdAt:Date.now()});
     persist();closeModal();render();toast('Lançamento salvo com sucesso!');
@@ -232,7 +245,7 @@ function editTransactionModal(id){
   openModal(`<h2>Editar lançamento</h2><form id="editTransactionForm" class="form-grid"><label>Tipo<select id="editTxType"><option value="income" ${item.type==='income'?'selected':''}>Receita</option><option value="expense" ${item.type==='expense'?'selected':''}>Despesa</option></select></label><label>Descrição<input id="editTxDescription" required value="${escapeHtml(item.description)}" /></label><label>Valor<input id="editTxValue" type="text" inputmode="decimal" required value="${Number(item.value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><label>Categoria<select id="editTxCategory">${categoryOptions(item.type,item.category)}</select></label><label>Data<input id="editTxDate" type="date" value="${item.date}" required /></label><button class="primary" type="submit">Salvar alterações</button></form>`);
   const valueInput=$('editTxValue'),typeInput=$('editTxType'),categoryInput=$('editTxCategory');enableLiveMoneyMask(valueInput);
   typeInput.onchange=()=>categoryInput.innerHTML=categoryOptions(typeInput.value,'');
-  $('editTransactionForm').onsubmit=e=>{e.preventDefault();const fresh=state.transactions.find(t=>t.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const value=parseBRMoney(valueInput.value);if(!Number.isFinite(value)||value<=0)return toast('Digite um valor válido.');Object.assign(fresh,{type:typeInput.value,description:$('editTxDescription').value.trim(),value,category:categoryInput.value,date:$('editTxDate').value,updatedAt:Date.now()});persist();closeModal();render();toast('Lançamento atualizado com sucesso!')};
+  $('editTransactionForm').onsubmit=e=>{e.preventDefault();const fresh=state.transactions.find(t=>t.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const value=moneyInputValue(valueInput);if(!Number.isFinite(value)||value<=0)return toast('Digite um valor válido.');Object.assign(fresh,{type:typeInput.value,description:$('editTxDescription').value.trim(),value,category:categoryInput.value,date:$('editTxDate').value,updatedAt:Date.now()});persist();closeModal();render();toast('Lançamento atualizado com sucesso!')};
 }
 function openGoalDetails(id){
   const item=state.goals.find(g=>g.id===id);
@@ -245,7 +258,7 @@ function editGoalModal(id){
   const item=state.goals.find(g=>g.id===id);if(!ownsItem(item))return toast('Ação não permitida.');
   openModal(`<h2>Editar meta</h2><form id="editGoalForm" class="form-grid"><label>Nome da meta<input id="editGoalName" required value="${escapeHtml(item.name)}" /></label><label>Valor desejado<input id="editGoalTarget" type="text" inputmode="decimal" required value="${Number(item.target).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><label>Valor já guardado<input id="editGoalCurrent" type="text" inputmode="decimal" required value="${Number(item.current).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><button class="primary" type="submit">Salvar alterações</button></form>`);
   const target=$('editGoalTarget'),current=$('editGoalCurrent');enableLiveMoneyMask(target);enableLiveMoneyMask(current);
-  $('editGoalForm').onsubmit=e=>{e.preventDefault();const fresh=state.goals.find(g=>g.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const targetValue=parseBRMoney(target.value),currentValue=parseBRMoney(current.value);if(!Number.isFinite(targetValue)||targetValue<=0)return toast('Digite um objetivo válido.');if(!Number.isFinite(currentValue)||currentValue<0)return toast('Digite um valor guardado válido.');Object.assign(fresh,{name:$('editGoalName').value.trim(),target:targetValue,current:currentValue,updatedAt:Date.now()});persist();closeModal();render();toast('Meta atualizada com sucesso!')};
+  $('editGoalForm').onsubmit=e=>{e.preventDefault();const fresh=state.goals.find(g=>g.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const targetValue=moneyInputValue(target),currentValue=moneyInputValue(current);if(!Number.isFinite(targetValue)||targetValue<=0)return toast('Digite um objetivo válido.');if(!Number.isFinite(currentValue)||currentValue<0)return toast('Digite um valor guardado válido.');Object.assign(fresh,{name:$('editGoalName').value.trim(),target:targetValue,current:currentValue,updatedAt:Date.now()});persist();closeModal();render();toast('Meta atualizada com sucesso!')};
 }
 function protectedDeleteModal(kind,id,label){
   const item=kind==='transaction'?state.transactions.find(t=>t.id===id):state.goals.find(g=>g.id===id);
@@ -256,12 +269,13 @@ function protectedDeleteModal(kind,id,label){
 }
 function aiModal(){
   if(!canUsePremiumApp()) return paymentModal();
-  const tx=userTx(), income=tx.filter(t=>t.type==='income').reduce((a,b)=>a+b.value,0), expense=tx.filter(t=>t.type==='expense').reduce((a,b)=>a+b.value,0);
-  const cats={};tx.filter(t=>t.type==='expense').forEach(t=>cats[t.category]=(cats[t.category]||0)+t.value);
+  const tx=userTx(), income=sumMoney(tx.filter(t=>t.type==='income')), expense=sumMoney(tx.filter(t=>t.type==='expense'));
+  const catsCents={};tx.filter(t=>t.type==='expense').forEach(t=>catsCents[t.category]=(catsCents[t.category]||0)+toCents(t.value));
+  const cats=Object.fromEntries(Object.entries(catsCents).map(([key,cents])=>[key,fromCents(cents)]));
   const top=Object.entries(cats).sort((a,b)=>b[1]-a[1])[0];
   const analysis=tx.length?`Você registrou ${money(income)} em receitas e ${money(expense)} em despesas. Seu saldo atual é ${money(income-expense)}.${top?` A categoria com maior gasto é ${top[0]}, com ${money(top[1])}.`:''} ${expense>income?'Atenção: suas despesas estão acima das receitas. Tente reduzir gastos não essenciais e definir um limite semanal.':'Seu resultado está positivo. Considere reservar parte do saldo para uma meta ou fundo de emergência.'}`:'Adicione receitas e despesas para que a IA gere uma análise personalizada.';
   openModal(`<h2>✦ IA Financeira</h2><div class="ai-box"><b>Análise automática</b><p>${analysis}</p></div><form id="aiForm" class="form-grid" style="margin-top:14px"><label>Pergunte sobre suas finanças<textarea id="aiQuestion" rows="3" required placeholder="Ex.: Como posso economizar mais?"></textarea></label><button class="primary">Analisar pergunta</button></form><div id="aiAnswer"></div>`);
-  $('aiForm').onsubmit=e=>{e.preventDefault();const q=$('aiQuestion').value.toLowerCase();let ans='Comece separando seus gastos em essenciais, importantes e adiáveis. Defina um teto semanal e acompanhe diariamente.';if(q.includes('econom'))ans=`Com base nos dados atuais, tente guardar pelo menos ${money(Math.max(0,income*0.1))} por mês e reduza primeiro a categoria ${top?.[0]||'de maior gasto'}.`;if(q.includes('gastei')||q.includes('gastando'))ans=`Suas despesas registradas somam ${money(expense)}.${top?` O maior gasto está em ${top[0]} (${money(top[1])}).`:''}`;if(q.includes('saldo'))ans=`Seu saldo calculado é ${money(income-expense)}.`;$('aiAnswer').innerHTML=`<div class="ai-box" style="margin-top:12px"><b>Resposta da IA</b><p>${ans}</p></div>`}
+  $('aiForm').onsubmit=e=>{e.preventDefault();const q=$('aiQuestion').value.toLowerCase();let ans='Comece separando seus gastos em essenciais, importantes e adiáveis. Defina um teto semanal e acompanhe diariamente.';if(q.includes('econom'))ans=`Com base nos dados atuais, tente guardar pelo menos ${money(fromCents(Math.max(0,Math.round(toCents(income)*0.1))))} por mês e reduza primeiro a categoria ${top?.[0]||'de maior gasto'}.`;if(q.includes('gastei')||q.includes('gastando'))ans=`Suas despesas registradas somam ${money(expense)}.${top?` O maior gasto está em ${top[0]} (${money(top[1])}).`:''}`;if(q.includes('saldo'))ans=`Seu saldo calculado é ${money(income-expense)}.`;$('aiAnswer').innerHTML=`<div class="ai-box" style="margin-top:12px"><b>Resposta da IA</b><p>${ans}</p></div>`}
 }
 
 function renderAdminNotifications(){
@@ -357,8 +371,8 @@ function upgradeModal(){paymentModal()}
 function ownerCenterModal(){
   const premium=state.users.filter(u=>subscriptionActive(u)&&u.role!=='owner').length;
   const pending=state.payments.filter(p=>p.status==='pending').length;
-  const income=state.transactions.filter(t=>t.type==='income').reduce((a,b)=>a+Number(b.value||0),0),expense=state.transactions.filter(t=>t.type==='expense').reduce((a,b)=>a+Number(b.value||0),0);
-  openModal(`<h2>Central do proprietário</h2><div class="summary-grid"><article class="summary"><span>Usuários</span><strong>${state.users.length}</strong></article><article class="summary"><span>Premium</span><strong>${premium}</strong></article><article class="summary"><span>Pagamentos pendentes</span><strong>${pending}</strong></article><article class="summary"><span>Receita mensal</span><strong>${money(premium*Number(state.settings.premiumPrice||24.90))}</strong></article></div><div class="modal-actions"><button id="managePayments" class="primary">Pagamentos</button><button id="manageUsers" class="secondary">Usuários</button><button id="ownerSettings" class="secondary">Configurações</button><button id="ownerBackup" class="secondary">Backup</button></div><div class="ai-box" style="margin-top:12px"><b>Dados financeiros gerenciados</b><p>Receitas: ${money(income)}<br>Despesas: ${money(expense)}<br>Saldo: ${money(income-expense)}</p></div>`);
+  const income=sumMoney(state.transactions.filter(t=>t.type==='income')),expense=sumMoney(state.transactions.filter(t=>t.type==='expense'));
+  openModal(`<h2>Central do proprietário</h2><div class="summary-grid"><article class="summary"><span>Usuários</span><strong>${state.users.length}</strong></article><article class="summary"><span>Premium</span><strong>${premium}</strong></article><article class="summary"><span>Pagamentos pendentes</span><strong>${pending}</strong></article><article class="summary"><span>Receita mensal</span><strong>${money(fromCents(premium*toCents(state.settings.premiumPrice||24.90)))}</strong></article></div><div class="modal-actions"><button id="managePayments" class="primary">Pagamentos</button><button id="manageUsers" class="secondary">Usuários</button><button id="ownerSettings" class="secondary">Configurações</button><button id="ownerBackup" class="secondary">Backup</button></div><div class="ai-box" style="margin-top:12px"><b>Dados financeiros gerenciados</b><p>Receitas: ${money(income)}<br>Despesas: ${money(expense)}<br>Saldo: ${money(income-expense)}</p></div>`);
   $('managePayments').onclick=ownerPaymentsModal;$('manageUsers').onclick=ownerUsersModal;$('ownerSettings').onclick=ownerSettingsModal;$('ownerBackup').onclick=exportOwnerBackup;
 }
 function ownerPaymentsModal(){
@@ -454,7 +468,14 @@ $('themeBtn').onclick=()=>{document.body.classList.toggle('light');localStorage.
 document.querySelectorAll('.nav').forEach(n=>n.onclick=()=>{document.querySelectorAll('.nav').forEach(x=>x.classList.remove('active'));n.classList.add('active');if(n.dataset.page==='transactions')allTransactionsModal();if(n.dataset.page==='reports')aiModal();if(n.dataset.page==='profile')profileModal()});
 if(localStorage.getItem('fia_theme')==='light')document.body.classList.add('light');
 window.addEventListener('beforeunload',()=>{if(state.user){state.user.online=false;state.user.lastSeen=Date.now();state.users=state.users.map(u=>u.id===state.user.id?state.user:u);persist();}});
-if('serviceWorker' in navigator)navigator.serviceWorker.register('service-worker.js').catch(()=>{});
+if('serviceWorker' in navigator){
+  if(['localhost','127.0.0.1'].includes(location.hostname)){
+    navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister()));
+    caches?.keys?.().then(keys=>keys.forEach(k=>caches.delete(k)));
+  }else{
+    navigator.serviceWorker.register('service-worker.js?v=5.3',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+  }
+}
 if(initCloud()){
   cloudAuth.onAuthStateChanged(async user=>{
     if(!user){state.user=null;showAuth();return;}
@@ -525,8 +546,10 @@ function ownerCenterModal(active='dashboard'){
 }
 function ownerRenderTab(tab,m){
   const panel=$('ownerPanel'); if(!panel)return;
+  panel.className='owner-panel owner-tab-'+tab;
+  panel.scrollTop=0;
   if(tab==='dashboard'){
-    const tx=state.transactions||[];const income=tx.filter(t=>t.type==='income').reduce((a,b)=>a+Number(b.value||0),0);const expense=tx.filter(t=>t.type==='expense').reduce((a,b)=>a+Number(b.value||0),0);
+    const tx=state.transactions||[];const income=sumMoney(tx.filter(t=>t.type==='income'));const expense=sumMoney(tx.filter(t=>t.type==='expense'));
     const expiring=(state.users||[]).filter(u=>{const d=new Date(u.subscriptionUntil||0);return ownerUserStatus(u)==='premium'&&d>Date.now()&&d-Date.now()<=7*86400000}).length;
     panel.innerHTML=`<div class="owner-title-row"><div><h3>Visão geral</h3><p>Dados atualizados do sistema</p></div><button id="ownerRefresh" class="owner-small-btn">↻ Atualizar</button></div>
     <div class="owner-metrics">
@@ -559,7 +582,7 @@ function ownerUserCard(u){const status=ownerUserStatus(u),labels={premium:'Premi
 async function ownerUserDetails(id){
   const u=(state.users||[]).find(x=>x.id===id);if(!u)return;
   let finance={transactions:{},goals:{}};if(cloudReady)try{finance=(await cloudDb.ref(`finance/${id}`).once('value')).val()||finance}catch(e){}
-  const tx=Object.values(finance.transactions||{}),income=tx.filter(t=>t.type==='income').reduce((s,t)=>s+Number(t.value||0),0),expense=tx.filter(t=>t.type==='expense').reduce((s,t)=>s+Number(t.value||0),0);const status=ownerUserStatus(u);
+  const tx=Object.values(finance.transactions||{}),income=sumMoney(tx.filter(t=>t.type==='income')),expense=sumMoney(tx.filter(t=>t.type==='expense'));const status=ownerUserStatus(u);
   openModal(`<div class="owner-detail"><button id="ownerBackUsers" class="owner-back">← Voltar</button><div class="profile-card"><div class="profile-avatar">${escapeHtml((u.name||'U').charAt(0).toUpperCase())}</div><div><h2>${escapeHtml(u.name||'Sem nome')}</h2><p>${escapeHtml(u.email||'')}</p></div></div>
   <div class="owner-detail-grid"><div><span>Status</span><b>${status}</b></div><div><span>Plano</span><b>${escapeHtml(u.plan||'Grátis')}</b></div><div><span>CPF</span><b>${escapeHtml(u.cpf||'Não informado')}</b></div><div><span>Telefone</span><b>${escapeHtml(u.phone||'Não informado')}</b></div><div><span>Cadastrado em</span><b>${ownerDate(u.createdAt)}</b></div><div><span>Assinatura até</span><b>${ownerDate(u.subscriptionUntil)}</b></div></div>
   <div class="owner-metrics mini">${ownerMetric('↗','Receitas',money(income),'Dados do cliente')}${ownerMetric('↘','Despesas',money(expense),'Dados do cliente')}${ownerMetric('◎','Saldo',money(income-expense),'Resultado atual')}${ownerMetric('🎯','Metas',Object.keys(finance.goals||{}).length,'Metas cadastradas')}</div>
