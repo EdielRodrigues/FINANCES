@@ -297,7 +297,40 @@ function protectedDeleteModal(kind,id,label){
   if(!ownsItem(item))return toast('Ação não permitida.');
   openModal(`<h2>Confirmar exclusão</h2><div class="danger-box"><b>Esta ação não pode ser desfeita.</b><p>Você está excluindo: ${escapeHtml(label)}</p></div><form id="protectedDeleteForm" class="form-grid"><label>Digite sua senha<input id="deletePassword" type="password" required autocomplete="current-password" /></label><label>Digite EXCLUIR para confirmar<input id="deleteWord" required autocomplete="off" placeholder="EXCLUIR" /></label><div class="modal-actions"><button type="button" id="cancelDeleteBtn" class="secondary">Cancelar</button><button type="submit" class="danger-button">Excluir definitivamente</button></div></form>`);
   $('cancelDeleteBtn').onclick=closeModal;
-  $('protectedDeleteForm').onsubmit=e=>{e.preventDefault();const fresh=kind==='transaction'?state.transactions.find(t=>t.id===id):state.goals.find(g=>g.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');if($('deletePassword').value!==state.user.password)return toast('Senha incorreta. Exclusão bloqueada.');if($('deleteWord').value.trim().toUpperCase()!=='EXCLUIR')return toast('Digite EXCLUIR para confirmar.');if(kind==='transaction')state.transactions=state.transactions.filter(t=>!(t.id===id&&t.userId===state.user.id));else state.goals=state.goals.filter(g=>!(g.id===id&&g.userId===state.user.id));persist();closeModal();render();toast(kind==='transaction'?'Lançamento excluído.':'Meta excluída.');};
+  $('protectedDeleteForm').onsubmit=async e=>{
+    e.preventDefault();
+    const fresh=kind==='transaction'?state.transactions.find(t=>t.id===id):state.goals.find(g=>g.id===id);
+    if(!ownsItem(fresh))return toast('Ação não permitida.');
+    const password=$('deletePassword').value;
+    if($('deleteWord').value.trim().toUpperCase()!=='EXCLUIR')return toast('Digite EXCLUIR para confirmar.');
+    const submitBtn=$('protectedDeleteForm').querySelector('button[type="submit"]');
+    submitBtn.disabled=true;submitBtn.textContent='Excluindo...';
+    try{
+      if(cloudReady){
+        const user=cloudAuth.currentUser;
+        if(!user||!user.email)throw new Error('Sua sessão expirou. Entre novamente.');
+        const cred=firebase.auth.EmailAuthProvider.credential(user.email,password);
+        await user.reauthenticateWithCredential(cred);
+        const path=kind==='transaction'?`finance/${user.uid}/transactions/${id}`:`finance/${user.uid}/goals/${id}`;
+        await cloudDb.ref(path).remove();
+      }else{
+        if(password!==state.user.password)throw new Error('Senha incorreta.');
+      }
+      if(kind==='transaction')state.transactions=state.transactions.filter(t=>!(t.id===id&&t.userId===state.user.id));
+      else state.goals=state.goals.filter(g=>!(g.id===id&&g.userId===state.user.id));
+      localStorage.setItem('fia_transactions',JSON.stringify(state.transactions));
+      localStorage.setItem('fia_goals',JSON.stringify(state.goals));
+      closeModal();render();toast(kind==='transaction'?'Lançamento excluído com sucesso.':'Meta excluída com sucesso.');
+    }catch(err){
+      console.error('Erro ao excluir:',err);
+      const code=err?.code||'';
+      const message=(code==='auth/wrong-password'||code==='auth/invalid-credential'||code==='auth/invalid-login-credentials')
+        ?'Senha incorreta. Exclusão bloqueada.'
+        :(code==='auth/too-many-requests'?'Muitas tentativas. Aguarde um pouco e tente novamente.':(err?.message||'Não foi possível excluir.'));
+      toast(message);
+      submitBtn.disabled=false;submitBtn.textContent='Excluir definitivamente';
+    }
+  };
 }
 function aiModal(){
   if(!canUsePremiumApp()) return paymentModal();
