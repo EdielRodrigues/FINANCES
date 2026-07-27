@@ -1,5 +1,5 @@
-const CACHE='finance-ia-pro-v7.1-perfil-acesso-vencido';
-const FILES=['./','./index.html','./style.css','./app.js','./config.js','./manifest.json','./icon-192.png','./icon-512.png'];
+const CACHE='finance-ia-pro-v7.2-pix-auto-liberacao';
+const FILES=['./','./index.html','./style.css','./app.js','./v7-features.js','./config.js','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{self.skipWaiting();event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)));});
 self.addEventListener('activate',event=>{event.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))]));});
 self.addEventListener('fetch',event=>{

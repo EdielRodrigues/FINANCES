@@ -10,6 +10,7 @@ const CLOUD_ENABLED = Boolean(window.firebase && CLOUD_CONFIG.firebase && CLOUD_
 const BACKEND_URL = String(CLOUD_CONFIG.backendUrl || '').replace(/\/$/, '');
 const OWNER_EMAILS = (CLOUD_CONFIG.ownerEmails || []).map(x=>String(x).trim().toLowerCase());
 let cloudAuth=null, cloudDb=null, cloudReady=false, cloudUnsubs=[];
+let paymentMonitorTimer=null, paymentMonitorBusy=false, lastAccessUnlockedAt=0;
 
 function initCloud(){
   if(!CLOUD_ENABLED) return false;
@@ -53,7 +54,7 @@ function subscribeCloudData(uid){
       cloudSaveState().catch(e=>console.error('Falha ao reenviar metas locais:',e));
     }
   });
-  bind(`users/${uid}`,v=>{if(!v||!state.user)return; state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=accessPlan(v); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render();});
+  bind(`users/${uid}`,v=>{if(!v||!state.user)return; const wasLocked=accessExpired(); state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=accessPlan(v); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render(); if(wasLocked&&subscriptionActive()) unlockAfterApprovedPayment();});
   bind('settings/financeIa',v=>{state.settings={...state.settings,...v,premiumPrice:24.90}; localStorage.setItem('fia_settings',JSON.stringify(state.settings));});
   if(isOwner()){
     bind('users',v=>{state.users=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_users',JSON.stringify(state.users));});
@@ -167,6 +168,83 @@ function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('sho
 let modalLocked=false;
 function openModal(html,lock=false){modalLocked=Boolean(lock);$('modal').classList.remove('owner-modal');$('modalContent').innerHTML=html;$('modal').classList.remove('hidden');$('closeModal').classList.toggle('hidden',modalLocked)}
 function closeModal(force=false){if(modalLocked&&!force)return;$('modal').classList.add('hidden');$('modal').classList.remove('owner-modal');modalLocked=false;$('closeModal').classList.remove('hidden')}
+
+function rememberPaymentId(id){
+  if(!id)return;
+  localStorage.setItem('fia_active_payment_id',String(id));
+}
+function clearRememberedPayment(){localStorage.removeItem('fia_active_payment_id')}
+function unlockAfterApprovedPayment(){
+  if(!state.user||!subscriptionActive())return;
+  clearRememberedPayment();
+  stopPaymentMonitor();
+  modalLocked=false;
+  closeModal(true);
+  applyAccessLockUI();
+  render();
+  const now=Date.now();
+  if(now-lastAccessUnlockedAt>5000){
+    lastAccessUnlockedAt=now;
+    toast('Pagamento aprovado! Acesso liberado por 30 dias.');
+  }
+}
+async function refreshCurrentUserFromFirebase(){
+  if(!cloudReady||!cloudAuth?.currentUser)return false;
+  const uid=cloudAuth.currentUser.uid;
+  const snap=await cloudDb.ref(`users/${uid}`).once('value');
+  const v=snap.val();
+  if(!v)return false;
+  state.user={id:uid,...v};
+  if(isOwner())state.user.role='owner';
+  state.plan=accessPlan(state.user);
+  localStorage.setItem('fia_user',JSON.stringify(state.user));
+  localStorage.setItem('fia_plan',state.plan);
+  if(subscriptionActive()){unlockAfterApprovedPayment();return true}
+  render();
+  return false;
+}
+async function reconcilePaymentAccess(silent=true){
+  if(paymentMonitorBusy||!cloudReady||!BACKEND_URL||!cloudAuth?.currentUser||isOwner())return false;
+  paymentMonitorBusy=true;
+  try{
+    const remembered=localStorage.getItem('fia_active_payment_id');
+    let result;
+    if(remembered){
+      try{result=await apiFetch(`/paymentStatus?id=${encodeURIComponent(remembered)}`)}catch(_e){result=null}
+    }
+    if(!result||!result.payment||String(result.payment.status||'').toLowerCase()!=='approved'){
+      result=await apiFetch('/latestPayment');
+    }
+    const payment=result?.payment||null;
+    if(payment?.id)rememberPaymentId(payment.id);
+    const status=String(payment?.status||'').toLowerCase();
+    const statusEl=$('pixStatus');
+    if(statusEl)statusEl.textContent=status||'pending';
+    if(status==='approved'){
+      await refreshCurrentUserFromFirebase();
+      return true;
+    }
+    if(!silent&&payment)toast(`Pagamento: ${status||'pendente'}. Aguardando confirmação.`);
+    return false;
+  }catch(e){
+    if(!silent)toast(e.message||'Não foi possível verificar o pagamento.');
+    return false;
+  }finally{paymentMonitorBusy=false}
+}
+function startPaymentMonitor(){
+  stopPaymentMonitor();
+  reconcilePaymentAccess(true);
+  paymentMonitorTimer=setInterval(()=>reconcilePaymentAccess(true),7000);
+}
+function stopPaymentMonitor(){if(paymentMonitorTimer){clearInterval(paymentMonitorTimer);paymentMonitorTimer=null}}
+function resumePaymentVerification(){
+  if(!state.user||isOwner()||subscriptionActive())return;
+  startPaymentMonitor();
+}
+window.addEventListener('focus',resumePaymentVerification);
+window.addEventListener('online',resumePaymentVerification);
+window.addEventListener('pageshow',resumePaymentVerification);
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resumePaymentVerification()});
 function userTx(){return state.transactions.filter(t=>t.userId===state.user?.id)}
 function userGoals(){return state.goals.filter(g=>g.userId===state.user?.id)}
 
@@ -183,6 +261,7 @@ function showApp(){
   $('userName').textContent=state.user.name.split(' ')[0];
   $('profileBtn').textContent=state.user.name.charAt(0).toUpperCase();
   render();
+  if(!isOwner()&&!subscriptionActive()) startPaymentMonitor();
   setTimeout(checkSubscriptionAccess,250);
 }
 function showAuth(){$('appScreen').classList.add('hidden');$('authScreen').classList.remove('hidden')}
@@ -391,7 +470,7 @@ function applyAccessLockUI(){
 function checkSubscriptionAccess(){
   if(!state.user||isOwner()) return;
   applyAccessLockUI();
-  if(!subscriptionActive()) paymentModal(true);
+  if(!subscriptionActive()){ startPaymentMonitor(); paymentModal(true); }
 }
 function nextDueDate(){const d=new Date();d.setDate(d.getDate()+30);return d.toISOString()}
 function paymentReference(){return 'FIA-'+String(state.user?.id||'').slice(0,8).toUpperCase()+'-'+Date.now().toString().slice(-6)}
@@ -421,10 +500,10 @@ async function paymentModal(lock=false){
       openModal(`<h2>Gerando seu Pix</h2><div class="ai-box"><b>${money(price)} por mês</b><p>Aguarde enquanto criamos uma cobrança Pix segura...</p></div>`,lock);
       try{
         const data=await apiFetch('/createPix',{method:'POST',body:JSON.stringify({planId:'mensal'})});
-        const p=data.payment||{}; const qr=p.qrCodeBase64?`<img class="pix-qr" alt="QR Code Pix" src="data:image/png;base64,${p.qrCodeBase64}">`:'';
+        const p=data.payment||{}; rememberPaymentId(p.id); startPaymentMonitor(); const qr=p.qrCodeBase64?`<img class="pix-qr" alt="QR Code Pix" src="data:image/png;base64,${p.qrCodeBase64}">`:'';
         openModal(`<h2>Faça o pagamento agora</h2><div class="ai-box"><b>${money(p.amount||price)} por mês</b><p>Pague pelo QR Code ou Pix Copia e Cola. A liberação será automática após a confirmação.</p>${qr}<label>Pix Copia e Cola<textarea id="pixCopy" rows="4" readonly>${escapeHtml(p.qrCode||'')}</textarea></label><p>Status: <b id="pixStatus">${escapeHtml(p.status||'pending')}</b><br>Vencimento da cobrança: ${p.expiresAt?new Date(p.expiresAt).toLocaleString('pt-BR'):'-'}</p></div><div class="modal-actions"><button id="copyPixBtn" class="secondary">Copiar Pix</button><button id="checkPixBtn" class="primary">Verificar pagamento</button></div>${lock?'<p class="protection-note">O aplicativo permanece bloqueado até o pagamento ser aprovado.</p>':''}`,lock);
         $('copyPixBtn').onclick=async()=>{try{await navigator.clipboard.writeText(p.qrCode||'');toast('Pix Copia e Cola copiado.')}catch{toast('Selecione e copie o código Pix.')}};
-        $('checkPixBtn').onclick=async()=>{try{const r=await apiFetch(`/paymentStatus?id=${encodeURIComponent(p.id)}`);const status=r.payment?.status||r.status||'pending';$('pixStatus').textContent=status;if(status==='approved'){toast('Pagamento aprovado! Acesso liberado.');modalLocked=false;closeModal(true);setTimeout(()=>location.reload(),500)}}catch(e){toast(e.message)}};
+        $('checkPixBtn').onclick=async()=>{rememberPaymentId(p.id);await reconcilePaymentAccess(false)};
       }catch(e){
         openModal(`<h2>Não foi possível gerar o Pix</h2><div class="danger-box"><p>${escapeHtml(e.message)}</p></div><button id="tryPixAgain" class="primary" style="width:100%;margin-top:12px">Tentar novamente</button><p class="protection-note">Confira o backend, o Mercado Pago, o Firebase e o CPF cadastrado.</p>`,lock);
         $('tryPixAgain').onclick=showOffer;
