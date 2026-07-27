@@ -53,7 +53,7 @@ function subscribeCloudData(uid){
       cloudSaveState().catch(e=>console.error('Falha ao reenviar metas locais:',e));
     }
   });
-  bind(`users/${uid}`,v=>{if(!v||!state.user)return; state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=isOwner()?'premium':(v.status==='ativo'?'premium':(v.plan||'free')); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render();});
+  bind(`users/${uid}`,v=>{if(!v||!state.user)return; state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=accessPlan(v); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render();});
   bind('settings/financeIa',v=>{state.settings={...state.settings,...v,premiumPrice:24.90}; localStorage.setItem('fia_settings',JSON.stringify(state.settings));});
   if(isOwner()){
     bind('users',v=>{state.users=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_users',JSON.stringify(state.users));});
@@ -164,8 +164,9 @@ function persist(){
   if(cloudReady&&state.user?.id) cloudSaveState().catch(e=>console.error('Sincronização:',e));
 }
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');setTimeout(()=>el.classList.remove('show'),2600)}
-function openModal(html){$('modalContent').innerHTML=html;$('modal').classList.remove('hidden')}
-function closeModal(){$('modal').classList.add('hidden')}
+let modalLocked=false;
+function openModal(html,lock=false){modalLocked=Boolean(lock);$('modal').classList.remove('owner-modal');$('modalContent').innerHTML=html;$('modal').classList.remove('hidden');$('closeModal').classList.toggle('hidden',modalLocked)}
+function closeModal(force=false){if(modalLocked&&!force)return;$('modal').classList.add('hidden');$('modal').classList.remove('owner-modal');modalLocked=false;$('closeModal').classList.remove('hidden')}
 function userTx(){return state.transactions.filter(t=>t.userId===state.user?.id)}
 function userGoals(){return state.goals.filter(g=>g.userId===state.user?.id)}
 
@@ -196,7 +197,7 @@ function render(){
   $('incomeValue').textContent=state.hideBalance?'R$ •••••':money(income);
   $('expenseValue').textContent=state.hideBalance?'R$ •••••':money(expense);
   $('savingRate').textContent=income>0?Math.max(0,Math.round((balance/income)*100))+'%':'0%';
-  $('planName').textContent=state.plan==='premium'?'Premium':'Grátis';
+  $('planName').textContent=isOwner()?'Proprietário':trialActive()?'Teste grátis 24h':subscriptionActive()?'Premium':'Bloqueado';
   $('monthResult').textContent='Resultado: '+money(balance);
   $('incomeBar').style.width=(income/max*100)+'%';
   $('expenseBar').style.width=(expense/max*100)+'%';
@@ -359,13 +360,24 @@ function isOwner(){
   const email=String(state.user?.email||cloudAuth?.currentUser?.email||'').toLowerCase();
   return state.user?.role==='owner' || OWNER_EMAILS.includes(email);
 }
+function trialEndTime(u=state.user){
+  const explicit=u?.trialEndsAt||u?.trialUntil;
+  if(explicit)return new Date(explicit).getTime();
+  const created=u?.createdAt;
+  return created?new Date(created).getTime()+24*60*60*1000:0;
+}
+function trialActive(u=state.user){
+  if(!u||isOwner())return false;
+  return trialEndTime(u)>Date.now() && !['active','ativo'].includes(String(u?.subscriptionStatus||u?.status||'').toLowerCase());
+}
 function subscriptionActive(u=state.user){
   if(isOwner()) return true;
   const status=u?.status==='ativo'||u?.subscriptionStatus==='active';
   const until=u?.expiresAt||u?.subscriptionUntil;
-  if(!status||!until) return false;
-  return new Date(until).getTime()>Date.now();
+  if(status&&until&&new Date(until).getTime()>Date.now()) return true;
+  return trialActive(u);
 }
+function accessPlan(u=state.user){return isOwner()||subscriptionActive(u)?'premium':'free'}
 function canUsePremiumApp(){return subscriptionActive()}
 function checkSubscriptionAccess(){
   if(!state.user||isOwner()) return;
@@ -374,24 +386,44 @@ function checkSubscriptionAccess(){
 function nextDueDate(){const d=new Date();d.setDate(d.getDate()+30);return d.toISOString()}
 function paymentReference(){return 'FIA-'+String(state.user?.id||'').slice(0,8).toUpperCase()+'-'+Date.now().toString().slice(-6)}
 async function paymentModal(lock=false){
-  if(cloudReady&&BACKEND_URL){
-    openModal(`<h2>Assinatura mensal</h2><div class="ai-box"><b>${money(24.90)} por mês</b><p>Gerando cobrança Pix segura...</p></div>`);
-    try{
-      const data=await apiFetch('/createPix',{method:'POST',body:JSON.stringify({planId:'mensal'})});
-      const p=data.payment||{}; const qr=p.qrCodeBase64?`<img class="pix-qr" alt="QR Code Pix" src="data:image/png;base64,${p.qrCodeBase64}">`:'';
-      openModal(`<h2>Assinatura mensal</h2><div class="ai-box"><b>${money(p.amount||24.90)} por mês</b><p>Pague pelo QR Code ou Pix Copia e Cola. A liberação será automática após o webhook confirmar.</p>${qr}<label>Pix Copia e Cola<textarea id="pixCopy" rows="4" readonly>${escapeHtml(p.qrCode||'')}</textarea></label><p>Status: <b id="pixStatus">${escapeHtml(p.status||'pending')}</b><br>Vencimento da cobrança: ${p.expiresAt?new Date(p.expiresAt).toLocaleString('pt-BR'):'-'}</p></div><div class="modal-actions"><button id="copyPixBtn" class="secondary">Copiar Pix</button><button id="checkPixBtn" class="primary">Verificar pagamento</button></div>${lock?'<p class="protection-note">O acesso Premium será liberado automaticamente por 30 dias.</p>':''}`);
-      $('copyPixBtn').onclick=async()=>{try{await navigator.clipboard.writeText(p.qrCode||'');toast('Pix Copia e Cola copiado.')}catch{toast('Selecione e copie o código Pix.')}};
-      $('checkPixBtn').onclick=async()=>{try{const r=await apiFetch(`/paymentStatus?id=${encodeURIComponent(p.id)}`);$('pixStatus').textContent=r.payment?.status||r.status||'pending';if((r.payment?.status||r.status)==='approved'){toast('Pagamento aprovado! Premium liberado.');closeModal();}}catch(e){toast(e.message)}};
-    }catch(e){openModal(`<h2>Não foi possível gerar o Pix</h2><div class="danger-box"><p>${escapeHtml(e.message)}</p></div><p class="protection-note">Confira o endereço do backend, as credenciais do Mercado Pago, o Firebase e o CPF cadastrado.</p>`)}
-    return;
-  }
-  const price=Number(state.settings.premiumPrice||24.90), pix=state.settings.pixKey||'CHAVE_PIX_NAO_CONFIGURADA';
-  const ref=paymentReference();
-  openModal(`<h2>Modo demonstração</h2><div class="ai-box"><b>${money(price)} por mês</b><p>Configure Firebase e backend no arquivo <b>config.js</b> para gerar Pix automático.</p><p><b>Chave Pix:</b> ${escapeHtml(pix)}</p><p><b>Referência:</b> ${escapeHtml(ref)}</p></div>`);
+  const price=Number(state.settings.premiumPrice||24.90);
+  const showOffer=()=>{
+    openModal(`<div class="payment-gate">
+      <div class="payment-gate-icon">◆</div>
+      <h2>Seu período grátis terminou</h2>
+      <p>As 24 horas para conhecer o Finance IA Pro foram encerradas. Para continuar usando receitas, despesas, metas, relatórios e IA financeira, ative o plano mensal.</p>
+      <div class="payment-plan-card"><small>PLANO ÚNICO</small><strong>${money(price)}<span>/mês</span></strong><ul><li>✓ Acesso completo ao aplicativo</li><li>✓ Receitas e despesas ilimitadas</li><li>✓ Metas e relatórios financeiros</li><li>✓ Liberação automática após o Pix</li></ul></div>
+      <button id="generatePixNow" class="primary payment-main-button">Gerar Pix agora</button>
+      <p class="protection-note">Pagamento seguro por Pix. Após a aprovação, o acesso será liberado por 30 dias.</p>
+    </div>`,lock);
+    $('generatePixNow').onclick=generatePix;
+  };
+  const generatePix=async()=>{
+    if(cloudReady&&BACKEND_URL){
+      openModal(`<h2>Gerando seu Pix</h2><div class="ai-box"><b>${money(price)} por mês</b><p>Aguarde enquanto criamos uma cobrança Pix segura...</p></div>`,lock);
+      try{
+        const data=await apiFetch('/createPix',{method:'POST',body:JSON.stringify({planId:'mensal'})});
+        const p=data.payment||{}; const qr=p.qrCodeBase64?`<img class="pix-qr" alt="QR Code Pix" src="data:image/png;base64,${p.qrCodeBase64}">`:'';
+        openModal(`<h2>Faça o pagamento agora</h2><div class="ai-box"><b>${money(p.amount||price)} por mês</b><p>Pague pelo QR Code ou Pix Copia e Cola. A liberação será automática após a confirmação.</p>${qr}<label>Pix Copia e Cola<textarea id="pixCopy" rows="4" readonly>${escapeHtml(p.qrCode||'')}</textarea></label><p>Status: <b id="pixStatus">${escapeHtml(p.status||'pending')}</b><br>Vencimento da cobrança: ${p.expiresAt?new Date(p.expiresAt).toLocaleString('pt-BR'):'-'}</p></div><div class="modal-actions"><button id="copyPixBtn" class="secondary">Copiar Pix</button><button id="checkPixBtn" class="primary">Verificar pagamento</button></div>${lock?'<p class="protection-note">O aplicativo permanece bloqueado até o pagamento ser aprovado.</p>':''}`,lock);
+        $('copyPixBtn').onclick=async()=>{try{await navigator.clipboard.writeText(p.qrCode||'');toast('Pix Copia e Cola copiado.')}catch{toast('Selecione e copie o código Pix.')}};
+        $('checkPixBtn').onclick=async()=>{try{const r=await apiFetch(`/paymentStatus?id=${encodeURIComponent(p.id)}`);const status=r.payment?.status||r.status||'pending';$('pixStatus').textContent=status;if(status==='approved'){toast('Pagamento aprovado! Acesso liberado.');modalLocked=false;closeModal(true);setTimeout(()=>location.reload(),500)}}catch(e){toast(e.message)}};
+      }catch(e){
+        openModal(`<h2>Não foi possível gerar o Pix</h2><div class="danger-box"><p>${escapeHtml(e.message)}</p></div><button id="tryPixAgain" class="primary" style="width:100%;margin-top:12px">Tentar novamente</button><p class="protection-note">Confira o backend, o Mercado Pago, o Firebase e o CPF cadastrado.</p>`,lock);
+        $('tryPixAgain').onclick=showOffer;
+      }
+      return;
+    }
+    const pix=state.settings.pixKey||'CHAVE_PIX_NAO_CONFIGURADA';
+    const ref=paymentReference();
+    openModal(`<h2>Pagamento do plano</h2><div class="ai-box"><b>${money(price)} por mês</b><p>Configure Firebase e backend no arquivo <b>config.js</b> para gerar Pix automático.</p><p><b>Chave Pix:</b> ${escapeHtml(pix)}</p><p><b>Referência:</b> ${escapeHtml(ref)}</p></div>`,lock);
+  };
+  showOffer();
 }
+
 function profileModal(){
   const expiry=state.user.expiresAt||state.user.subscriptionUntil;
-  const until=expiry?new Date(expiry).toLocaleDateString('pt-BR'):'Não ativa';
+  const trialUntil=trialEndTime();
+  const until=trialActive()&&trialUntil?new Date(trialUntil).toLocaleString('pt-BR'):expiry?new Date(expiry).toLocaleDateString('pt-BR'):'Não ativa';
   const owner=isOwner();
   openModal(`<h2>Meu perfil</h2>
     <div class="profile-card">
@@ -399,7 +431,7 @@ function profileModal(){
       <div><b>${escapeHtml(state.user.name||'Usuário')}</b><p>${escapeHtml(state.user.email||'')}</p></div>
     </div>
     <div class="summary-grid profile-summary">
-      <article class="summary"><span>Plano</span><strong>${owner?'Proprietário':subscriptionActive()?'Premium':'Pendente'}</strong></article>
+      <article class="summary"><span>Plano</span><strong>${owner?'Proprietário':trialActive()?'Teste grátis 24h':subscriptionActive()?'Premium':'Pagamento necessário'}</strong></article>
       <article class="summary"><span>Validade</span><strong>${owner?'Ilimitada':until}</strong></article>
     </div>
     <div class="profile-menu">
@@ -509,23 +541,23 @@ $('registerForm').onsubmit=async e=>{
     const uid=cred.user.uid;
     const now=new Date().toISOString();
     const owner=OWNER_EMAILS.includes(email);
-    const profile={name,email,cpf,phone,role:owner?'owner':'client',status:owner?'ativo':'pendente',plan:owner?'premium':'mensal',subscriptionStatus:owner?'active':'pending',createdAt:now,updatedAt:now};
+    const trialEndsAt=new Date(Date.now()+24*60*60*1000).toISOString();
+    const profile={name,email,cpf,phone,role:owner?'owner':'client',status:owner?'ativo':'teste',plan:owner?'premium':'mensal',subscriptionStatus:owner?'active':'trial',trialStartedAt:now,trialEndsAt:owner?null:trialEndsAt,createdAt:now,updatedAt:now};
     const updates={};
     updates[`users/${uid}`]=profile;
     updates[`cpfIndex/${cpf}`]=uid;
     updates[`phoneIndex/${phone}`]=uid;
     await cloudDb.ref().update(updates);
     state.user={id:uid,...profile};
-    state.plan=owner?'premium':'free';
+    state.plan=owner?'premium':'premium';
     subscribeCloudData(uid);
     showApp();
-    toast(owner?'Conta do proprietário conectada.':'Conta criada. Gerando cobrança Pix...');
-    if(!owner)setTimeout(()=>paymentModal(true),700);
+    toast(owner?'Conta do proprietário conectada.':'Conta criada! Você ganhou 24 horas grátis para conhecer o aplicativo.');
   }catch(err){
     toast(firebaseErrorMessage(err));
   }
 };
-$('closeModal').onclick=closeModal;$('modal').onclick=e=>{if(e.target===$('modal'))closeModal()};
+$('closeModal').onclick=()=>closeModal();$('modal').onclick=e=>{if(e.target===$('modal'))closeModal()};
 $('addIncomeBtn').onclick=()=>transactionModal('income');$('addExpenseBtn').onclick=()=>transactionModal('expense');$('goalBtn').onclick=goalModal;$('newGoalLink').onclick=goalModal;$('aiBtn').onclick=aiModal;$('profileBtn').onclick=profileModal;$('upgradeBtn').onclick=upgradeModal;$('viewAllBtn').onclick=allTransactionsModal;
 $('toggleBalance').onclick=()=>{state.hideBalance=!state.hideBalance;render()};
 $('notificationBtn').onclick=notificationsModal;
@@ -538,9 +570,12 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister()));
     caches?.keys?.().then(keys=>keys.forEach(k=>caches.delete(k)));
   }else{
-    navigator.serviceWorker.register('service-worker.js?v=5.3',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+    navigator.serviceWorker.register('service-worker.js?v=6.1',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
   }
 }
+setInterval(()=>{if(state.user&&!isOwner()){state.plan=accessPlan();if(!subscriptionActive())checkSubscriptionAccess();else render();}},60000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&state.user&&!isOwner()){state.plan=accessPlan();checkSubscriptionAccess();render();}});
+
 if(initCloud()){
   cloudAuth.onAuthStateChanged(async user=>{
     if(!user){state.user=null;showAuth();return;}
@@ -548,7 +583,7 @@ if(initCloud()){
     const profile=snap.val()||{name:user.email?.split('@')[0]||'Usuário',email:user.email};
     state.user={id:user.uid,...profile};
     if(OWNER_EMAILS.includes(String(user.email||profile.email||'').toLowerCase())){state.user.role='owner';state.user.status='ativo';state.user.plan='premium';try{await cloudDb.ref(`users/${user.uid}`).update({role:'owner',status:'ativo',plan:'premium',updatedAt:new Date().toISOString()});}catch(e){console.warn('Não foi possível gravar papel de proprietário:',e)}}
-    state.plan=isOwner()?'premium':(profile.status==='ativo'?'premium':(profile.plan||'free'));
+    state.plan=accessPlan(state.user);
     subscribeCloudData(user.uid); showApp();
   });
 }else{state.user?showApp():showAuth();}
@@ -604,7 +639,7 @@ function ownerCenterModal(active='dashboard'){
     </nav>
     <section id="ownerPanel" class="owner-panel"></section>
   </div>`);
-  document.querySelector('.modal-card').classList.add('owner-modal-card');
+  document.querySelector('.modal-card').classList.add('owner-modal-card');$('modal').classList.add('owner-modal');
   const metrics={clients,premium,online,pending,monthlyRevenue,totalRevenue,newToday,newMonth};
   document.querySelectorAll('[data-owner-tab]').forEach(b=>b.onclick=()=>{document.querySelectorAll('[data-owner-tab]').forEach(x=>x.classList.remove('active'));b.classList.add('active');ownerRenderTab(b.dataset.ownerTab,metrics)});
   ownerRenderTab(active,metrics);

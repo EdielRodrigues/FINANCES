@@ -495,3 +495,120 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
   .owner-tab-dashboard .owner-metric strong{font-size:10px!important}
   .owner-tab-backup .owner-card{min-height:142px!important;padding:7px!important}
 }
+
+/* V6.1 — tela de bloqueio após teste grátis de 24 horas */
+.payment-gate{text-align:center;padding:4px 0 8px}.payment-gate-icon{width:64px;height:64px;margin:0 auto 12px;border-radius:20px;display:grid;place-items:center;font-size:30px;background:rgba(49,214,158,.12);border:1px solid rgba(49,214,158,.3)}.payment-gate>p{line-height:1.55;color:var(--muted,#aab6c8)}.payment-plan-card{text-align:left;margin:18px 0;padding:18px;border-radius:20px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.1)}.payment-plan-card>small{display:block;letter-spacing:.14em;font-weight:800;opacity:.75}.payment-plan-card>strong{display:block;font-size:34px;margin:7px 0 12px}.payment-plan-card>strong span{font-size:14px;font-weight:500;opacity:.7}.payment-plan-card ul{list-style:none;padding:0;margin:0;display:grid;gap:8px}.payment-main-button{width:100%;min-height:54px;font-size:17px}.modal-card .close.hidden{display:none!important}
+
+
+/* V6.2 — rolagem completa em TODAS as abas da Central do Proprietário */
+@media (max-width:760px){
+  html,body{height:100%;}
+  #modal.owner-modal{
+    position:fixed!important;
+    inset:0!important;
+    z-index:9999!important;
+    display:block!important;
+    width:100%!important;
+    height:100dvh!important;
+    min-height:100dvh!important;
+    max-height:100dvh!important;
+    padding:0!important;
+    overflow:hidden!important;
+    background:rgba(0,0,0,.82)!important;
+  }
+  #modal.owner-modal .owner-modal-card{
+    position:absolute!important;
+    inset:0!important;
+    display:block!important;
+    width:100%!important;
+    height:100dvh!important;
+    min-height:0!important;
+    max-height:none!important;
+    margin:0!important;
+    padding:0!important;
+    border-radius:0!important;
+    overflow:hidden!important;
+  }
+  #modal.owner-modal .owner-shell{
+    position:absolute!important;
+    inset:0!important;
+    display:flex!important;
+    flex-direction:column!important;
+    width:100%!important;
+    height:100%!important;
+    min-height:0!important;
+    max-height:none!important;
+    overflow:hidden!important;
+  }
+  #modal.owner-modal .owner-header{
+    position:relative!important;
+    flex:0 0 62px!important;
+    width:100%!important;
+    height:62px!important;
+    min-height:62px!important;
+    max-height:62px!important;
+  }
+  #modal.owner-modal .owner-tabs{
+    position:relative!important;
+    flex:0 0 49px!important;
+    width:100%!important;
+    height:49px!important;
+    min-height:49px!important;
+    max-height:49px!important;
+  }
+  #modal.owner-modal .owner-panel{
+    position:relative!important;
+    flex:1 1 0!important;
+    display:block!important;
+    width:100%!important;
+    height:0!important;
+    min-height:0!important;
+    max-height:none!important;
+    overflow-x:hidden!important;
+    overflow-y:scroll!important;
+    -webkit-overflow-scrolling:touch!important;
+    overscroll-behavior-y:contain!important;
+    touch-action:pan-y!important;
+    padding:10px 9px calc(210px + env(safe-area-inset-bottom,0px))!important;
+    scroll-padding-bottom:210px!important;
+  }
+  #modal.owner-modal .owner-panel::after{
+    content:""!important;
+    display:block!important;
+    clear:both!important;
+    width:100%!important;
+    height:150px!important;
+    min-height:150px!important;
+    margin:0!important;
+    pointer-events:none!important;
+  }
+  #modal.owner-modal .owner-panel > :last-child{
+    margin-bottom:40px!important;
+  }
+  #modal.owner-modal .owner-tab-dashboard,
+  #modal.owner-modal .owner-tab-users,
+  #modal.owner-modal .owner-tab-payments,
+  #modal.owner-modal .owner-tab-reports,
+  #modal.owner-modal .owner-tab-settings,
+  #modal.owner-modal .owner-tab-backup{
+    padding-bottom:calc(210px + env(safe-area-inset-bottom,0px))!important;
+  }
+}
+@media (max-width:390px){
+  #modal.owner-modal .owner-header{flex-basis:58px!important;height:58px!important;min-height:58px!important;max-height:58px!important}
+  #modal.owner-modal .owner-tabs{flex-basis:45px!important;height:45px!important;min-height:45px!important;max-height:45px!important}
+  #modal.owner-modal .owner-panel{padding-bottom:calc(230px + env(safe-area-inset-bottom,0px))!important;scroll-padding-bottom:230px!important}
+  #modal.owner-modal .owner-panel::after{height:170px!important;min-height:170px!important}
+}
+
+/* ===== Finance IA Pro v7.0 ===== */
+.quick-actions{grid-template-columns:repeat(4,minmax(0,1fr))}
+.upcoming-list,.v7-list,.calendar-list,.report-list{display:grid;gap:8px}
+.upcoming-item,.record-row{width:100%;display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:10px;text-align:left;background:var(--card,#111c2c);border:1px solid rgba(255,255,255,.08);border-radius:14px;padding:11px;color:inherit}
+.upcoming-item div,.record-row div{min-width:0}.upcoming-item b,.record-row b{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.upcoming-item small,.record-row small{display:block;opacity:.7;margin-top:3px}.upcoming-item strong,.record-row strong{white-space:nowrap}
+.v7-tabs{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0 12px}.v7-tabs button{padding:10px 6px;border-radius:12px;border:1px solid rgba(255,255,255,.09);background:transparent;color:inherit}.v7-tabs button.active{background:rgba(36,211,159,.15);border-color:#24d39f}
+.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.detail-grid p{margin:0;padding:12px;border-radius:12px;background:rgba(255,255,255,.04)}
+.inline-form{display:grid;grid-template-columns:1fr auto;gap:8px;margin-bottom:14px}.inline-form input{min-width:0}.chip-list{display:flex;flex-wrap:wrap;gap:8px}.category-chip{display:inline-flex;align-items:center;gap:6px;padding:8px 10px;border:1px solid rgba(255,255,255,.1);border-radius:999px}.category-chip button{border:0;background:transparent;color:inherit;font-size:18px;padding:0}
+.calendar-row,.report-list>div{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px;border-bottom:1px solid rgba(255,255,255,.07)}.calendar-row time{font-size:12px;min-width:76px}.calendar-row small{display:block;opacity:.7}.report-list>div span{overflow:hidden;text-overflow:ellipsis}
+@media(max-width:520px){.quick-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.quick-actions button{font-size:10px;padding:9px 3px}.quick-actions button span{font-size:18px}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.summary strong{font-size:14px}.detail-grid{grid-template-columns:1fr}.modal-card{padding-bottom:calc(44px + env(safe-area-inset-bottom))}}
+@media print{body *{visibility:hidden}.modal,.modal *{visibility:visible}.modal{position:absolute;inset:0;background:#fff;color:#000}.modal-card{box-shadow:none;max-height:none;overflow:visible}.close,.modal-actions{display:none!important}}
