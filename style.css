@@ -625,3 +625,12 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 .expired-profile-notice p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
 .profile-option.locked-option{opacity:.46;cursor:not-allowed;filter:grayscale(.35)}
 .profile-option.locked-option:disabled{pointer-events:none}
+
+/* V7.3 — controles avançados de acesso do usuário */
+.owner-access-control{margin-top:14px}
+.owner-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px}
+.owner-control-grid label{display:grid;gap:6px;color:var(--muted);font-size:11px}
+.owner-control-grid input,.owner-control-grid select{width:100%;margin:0;min-width:0}
+.owner-preset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:10px 0}
+.owner-preset-grid button{padding:11px 8px;font-size:11px}
+@media(max-width:620px){.owner-control-grid{grid-template-columns:1fr}.owner-preset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.owner-access-control .owner-actions-grid{grid-template-columns:1fr}}
