@@ -205,6 +205,7 @@ function render(){
   renderTransactions(tx);renderGoals();
   $('premiumBanner').classList.toggle('hidden',state.plan==='premium');
   renderAdminNotifications();
+  applyAccessLockUI();
 }
 function renderTransactions(tx){
   const box=$("transactionsList");
@@ -379,8 +380,17 @@ function subscriptionActive(u=state.user){
 }
 function accessPlan(u=state.user){return isOwner()||subscriptionActive(u)?'premium':'free'}
 function canUsePremiumApp(){return subscriptionActive()}
+function accessExpired(){return Boolean(state.user&&!isOwner()&&!subscriptionActive())}
+function applyAccessLockUI(){
+  const app=$('appScreen');
+  if(!app)return;
+  const locked=accessExpired();
+  app.classList.toggle('expired-access',locked);
+  app.setAttribute('data-access-locked',locked?'true':'false');
+}
 function checkSubscriptionAccess(){
   if(!state.user||isOwner()) return;
+  applyAccessLockUI();
   if(!subscriptionActive()) paymentModal(true);
 }
 function nextDueDate(){const d=new Date();d.setDate(d.getDate()+30);return d.toISOString()}
@@ -394,9 +404,17 @@ async function paymentModal(lock=false){
       <p>As 24 horas para conhecer o Finance IA Pro foram encerradas. Para continuar usando receitas, despesas, metas, relatórios e IA financeira, ative o plano mensal.</p>
       <div class="payment-plan-card"><small>PLANO ÚNICO</small><strong>${money(price)}<span>/mês</span></strong><ul><li>✓ Acesso completo ao aplicativo</li><li>✓ Receitas e despesas ilimitadas</li><li>✓ Metas e relatórios financeiros</li><li>✓ Liberação automática após o Pix</li></ul></div>
       <button id="generatePixNow" class="primary payment-main-button">Gerar Pix agora</button>
+      <button id="goToLockedProfile" class="secondary payment-profile-button">Ir para meu perfil</button>
       <p class="protection-note">Pagamento seguro por Pix. Após a aprovação, o acesso será liberado por 30 dias.</p>
     </div>`,lock);
     $('generatePixNow').onclick=generatePix;
+    $('goToLockedProfile').onclick=()=>{
+      modalLocked=false;
+      closeModal(true);
+      applyAccessLockUI();
+      document.querySelectorAll('.nav').forEach(x=>x.classList.toggle('active',x.dataset.page==='profile'));
+      profileModal();
+    };
   };
   const generatePix=async()=>{
     if(cloudReady&&BACKEND_URL){
@@ -425,6 +443,7 @@ function profileModal(){
   const trialUntil=trialEndTime();
   const until=trialActive()&&trialUntil?new Date(trialUntil).toLocaleString('pt-BR'):expiry?new Date(expiry).toLocaleDateString('pt-BR'):'Não ativa';
   const owner=isOwner();
+  const locked=accessExpired();
   openModal(`<h2>Meu perfil</h2>
     <div class="profile-card">
       <div class="profile-avatar">${escapeHtml((state.user.name||'U').charAt(0).toUpperCase())}</div>
@@ -434,21 +453,26 @@ function profileModal(){
       <article class="summary"><span>Plano</span><strong>${owner?'Proprietário':trialActive()?'Teste grátis 24h':subscriptionActive()?'Premium':'Pagamento necessário'}</strong></article>
       <article class="summary"><span>Validade</span><strong>${owner?'Ilimitada':until}</strong></article>
     </div>
+    ${locked?'<div class="expired-profile-notice"><b>Acesso bloqueado</b><p>Seu período grátis terminou. Você pode consultar sua assinatura, gerar o Pix e sair da conta. As outras funções permanecem bloqueadas até a aprovação do pagamento.</p></div>':''}
     <div class="profile-menu">
-      <button id="editProfileBtn" class="profile-option"><span>✎</span><div><b>Editar meus dados</b><small>Nome, CPF e informações da conta</small></div><i>›</i></button>
+      <button id="editProfileBtn" class="profile-option ${locked?'locked-option':''}" ${locked?'disabled aria-disabled="true"':''}><span>✎</span><div><b>Editar meus dados</b><small>${locked?'Bloqueado até ativar o plano':'Nome, CPF e informações da conta'}</small></div><i>${locked?'🔒':'›'}</i></button>
       <button id="mySubscriptionBtn" class="profile-option"><span>◆</span><div><b>Minha assinatura</b><small>Pix, vencimento e renovação mensal</small></div><i>›</i></button>
       <button id="myPaymentsBtn" class="profile-option"><span>▤</span><div><b>Meus pagamentos</b><small>Consultar a cobrança Pix mais recente</small></div><i>›</i></button>
-      <button id="exportMyDataBtn" class="profile-option"><span>⇩</span><div><b>Exportar meus dados</b><small>Baixar lançamentos e metas em JSON</small></div><i>›</i></button>
-      <button id="deleteMyAccountBtn" class="profile-option danger-option"><span>!</span><div><b>Excluir minha conta</b><small>Protegido por senha e confirmação</small></div><i>›</i></button>
+      <button id="exportMyDataBtn" class="profile-option ${locked?'locked-option':''}" ${locked?'disabled aria-disabled="true"':''}><span>⇩</span><div><b>Exportar meus dados</b><small>${locked?'Bloqueado até ativar o plano':'Baixar lançamentos e metas em JSON'}</small></div><i>${locked?'🔒':'›'}</i></button>
+      <button id="deleteMyAccountBtn" class="profile-option danger-option ${locked?'locked-option':''}" ${locked?'disabled aria-disabled="true"':''}><span>!</span><div><b>Excluir minha conta</b><small>${locked?'Bloqueado até ativar o plano':'Protegido por senha e confirmação'}</small></div><i>${locked?'🔒':'›'}</i></button>
       ${owner?'<button id="ownerCenterBtn" class="profile-option owner-option"><span>⚙</span><div><b>Central do proprietário</b><small>Usuários, Pix, receita e configurações</small></div><i>›</i></button>':''}
     </div>
+    ${locked?'<button id="profileGeneratePixBtn" class="primary" style="width:100%;margin-top:14px">Gerar Pix agora</button>':''}
     <button id="logoutBtn" class="secondary" style="width:100%;margin-top:14px">Sair da conta</button>`);
   $('logoutBtn').onclick=async()=>{if(cloudReady)await cloudAuth.signOut();state.user=null;persist();closeModal();showAuth()};
-  $('editProfileBtn').onclick=editMyProfileModal;
-  $('mySubscriptionBtn').onclick=paymentModal;
+  if(!locked){
+    $('editProfileBtn').onclick=editMyProfileModal;
+    $('exportMyDataBtn').onclick=exportMyData;
+    $('deleteMyAccountBtn').onclick=deleteMyAccountModal;
+  }
+  $('mySubscriptionBtn').onclick=()=>paymentModal(false);
   $('myPaymentsBtn').onclick=myPaymentsModal;
-  $('exportMyDataBtn').onclick=exportMyData;
-  $('deleteMyAccountBtn').onclick=deleteMyAccountModal;
+  if($('profileGeneratePixBtn'))$('profileGeneratePixBtn').onclick=()=>paymentModal(false);
   if(owner)$('ownerCenterBtn').onclick=ownerCenterModal;
 }
 function editMyProfileModal(){
@@ -494,6 +518,18 @@ function allTransactionsModal(){
   openModal(`<h2>Todos os lançamentos</h2><p class="protection-note">Toque em um lançamento para editar ou excluir com proteção.</p><div id="allTransactionsList" class="transactions">${tx.length?tx.map(t=>`<button type="button" class="transaction transaction-clickable" data-all-transaction-id="${t.id}"><div class="ico">${t.type==='income'?'↗':'↘'}</div><div class="txt"><b>${escapeHtml(t.description)}</b><small>${escapeHtml(t.category)} • ${new Date(t.date+'T12:00:00').toLocaleDateString('pt-BR')}</small></div><strong class="value ${t.type}">${t.type==='income'?'+ ':'- '}${money(t.value)}</strong><span class="item-chevron">›</span></button>`).join(''):'<div class="empty-state">Nenhum lançamento.</div>'}</div>`);
   document.querySelectorAll('[data-all-transaction-id]').forEach(el=>el.onclick=()=>openTransactionDetails(el.dataset.allTransactionId));
 }
+
+// Bloqueio total após o vencimento: somente Perfil, pagamento e sair permanecem acessíveis.
+document.addEventListener('click',event=>{
+  if(!accessExpired())return;
+  const insideApp=event.target.closest?.('#appScreen');
+  if(!insideApp)return;
+  const allowed=event.target.closest?.('#profileBtn, .nav[data-page="profile"]');
+  if(allowed)return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  toast('Acesso vencido. Entre no Perfil para gerar o Pix e liberar o aplicativo.');
+},true);
 
 // Eventos
 

@@ -612,3 +612,16 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 .calendar-row,.report-list>div{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;padding:10px;border-bottom:1px solid rgba(255,255,255,.07)}.calendar-row time{font-size:12px;min-width:76px}.calendar-row small{display:block;opacity:.7}.report-list>div span{overflow:hidden;text-overflow:ellipsis}
 @media(max-width:520px){.quick-actions{grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}.quick-actions button{font-size:10px;padding:9px 3px}.quick-actions button span{font-size:18px}.summary-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.summary strong{font-size:14px}.detail-grid{grid-template-columns:1fr}.modal-card{padding-bottom:calc(44px + env(safe-area-inset-bottom))}}
 @media print{body *{visibility:hidden}.modal,.modal *{visibility:visible}.modal{position:absolute;inset:0;background:#fff;color:#000}.modal-card{box-shadow:none;max-height:none;overflow:visible}.close,.modal-actions{display:none!important}}
+
+/* V7.1 — acesso vencido com Perfil disponível e restante bloqueado */
+.payment-profile-button{width:100%;min-height:50px;margin-top:12px;font-size:16px}
+.expired-access main{pointer-events:none;filter:saturate(.45);opacity:.38;user-select:none}
+.expired-access .top-actions>*{pointer-events:none;opacity:.35}
+.expired-access #profileBtn{pointer-events:auto;opacity:1;box-shadow:0 0 0 2px rgba(49,214,158,.35)}
+.expired-access .bottom-nav .nav{pointer-events:none;opacity:.32}
+.expired-access .bottom-nav .nav[data-page="profile"]{pointer-events:auto;opacity:1;color:var(--primary)}
+.expired-profile-notice{margin:14px 0;padding:14px;border-radius:16px;background:rgba(255,107,122,.09);border:1px solid rgba(255,107,122,.28);text-align:left}
+.expired-profile-notice b{display:block;color:var(--danger);margin-bottom:5px}
+.expired-profile-notice p{margin:0;color:var(--muted);font-size:12px;line-height:1.5}
+.profile-option.locked-option{opacity:.46;cursor:not-allowed;filter:grayscale(.35)}
+.profile-option.locked-option:disabled{pointer-events:none}
