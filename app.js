@@ -565,7 +565,52 @@ async function myPaymentsModal(){
 function exportMyData(){const uid=state.user.id;const data={app:'Finance IA Pro',exportedAt:new Date().toISOString(),profile:{name:state.user.name,email:state.user.email,cpf:state.user.cpf,plan:state.plan},transactions:state.transactions.filter(x=>x.userId===uid),goals:state.goals.filter(x=>x.userId===uid)};const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}));a.download='meus-dados-finance-ia.json';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Seus dados foram exportados.');}
 function deleteMyAccountModal(){
   openModal(`<h2>Excluir minha conta completa</h2><div class="danger-box"><b>Atenção</b><p>Esta ação apaga o e-mail do Authentication, CPF, telefone, perfil, lançamentos, metas, contas, cartões, pagamentos e todos os demais dados. Não poderá ser desfeita.</p></div><form id="deleteAccountForm" class="form-grid"><label>Senha da conta<input id="deleteAccountPassword" type="password" required autocomplete="current-password"></label><label>Digite EXCLUIR<input id="deleteAccountWord" autocomplete="off" required></label><button id="deleteAccountSubmit" class="danger-button">Excluir conta completa</button></form>`);
-  $('deleteAccountForm').onsubmit=async e=>{e.preventDefault();if($('deleteAccountWord').value.trim().toUpperCase()!=='EXCLUIR')return toast('Digite EXCLUIR corretamente.');if(!confirm('Confirma a exclusão completa da sua conta, inclusive e-mail, CPF e login?'))return;if(!confirm('CONFIRMAÇÃO FINAL: todos os dados serão apagados e não poderão ser recuperados.'))return;const btn=$('deleteAccountSubmit');btn.disabled=true;btn.textContent='Excluindo tudo...';try{if(cloudReady){if(!BACKEND_URL)throw new Error('Backend não configurado.');const user=cloudAuth.currentUser;if(!user)throw new Error('Sessão expirada. Entre novamente.');const cred=firebase.auth.EmailAuthProvider.credential(user.email,$('deleteAccountPassword').value);await user.reauthenticateWithCredential(cred);await apiFetch('/account/delete',{method:'POST',body:JSON.stringify({confirm:'EXCLUIR'})});try{await cloudAuth.signOut()}catch(_){}}else{if($('deleteAccountPassword').value!==state.user.password)throw new Error('Senha incorreta.');const uid=state.user.id;state.users=state.users.filter(x=>x.id!==uid);state.transactions=state.transactions.filter(x=>x.userId!==uid);state.goals=state.goals.filter(x=>x.userId!==uid);}state.user=null;state.plan='free';persist();closeModal();showAuth();toast('Conta, login, e-mail, CPF e todos os dados foram excluídos.')}catch(err){btn.disabled=false;btn.textContent='Excluir conta completa';toast(err.code==='auth/wrong-password'||err.code==='auth/invalid-credential'?'Senha incorreta.':(err.message||'Não foi possível excluir completamente a conta.'))}};
+  $('deleteAccountForm').onsubmit=async e=>{
+    e.preventDefault();
+    if($('deleteAccountWord').value.trim().toUpperCase()!=='EXCLUIR')return toast('Digite EXCLUIR corretamente.');
+    if(!confirm('Confirma a exclusão completa da sua conta, inclusive e-mail, CPF e login?'))return;
+    if(!confirm('CONFIRMAÇÃO FINAL: todos os dados serão apagados e não poderão ser recuperados.'))return;
+    const btn=$('deleteAccountSubmit');btn.disabled=true;btn.textContent='Excluindo tudo...';
+    try{
+      if(cloudReady){
+        const user=cloudAuth.currentUser;
+        if(!user)throw new Error('Sessão expirada. Entre novamente.');
+        const uid=user.uid;
+        const cred=firebase.auth.EmailAuthProvider.credential(user.email,$('deleteAccountPassword').value);
+        await user.reauthenticateWithCredential(cred);
+        let backendDeleted=false;
+        let routeError=null;
+        if(BACKEND_URL){
+          for(const route of ['/account/delete','/account/delete-complete','/api/account/delete','/deleteAccount','/delete-my-account']){
+            try{await apiFetch(route,{method:'POST',body:JSON.stringify({confirm:'EXCLUIR'})});backendDeleted=true;break}
+            catch(err){routeError=err;if(!/rota|route|not found|404/i.test(String(err.message||'')))throw err}
+          }
+        }
+        // Se o Render ainda estiver com a versão antiga, o próprio usuário consegue
+        // apagar seu login diretamente pelo Firebase Authentication.
+        if(!backendDeleted){
+          const ownPaths=[`finance/${uid}`,`users/${uid}`,`userNotifications/${uid}`,`deviceSessions/${uid}`,`referrals/${uid}`];
+          for(const path of ownPaths){try{await cloudDb.ref(path).remove()}catch(_){} }
+          try{await user.delete()}catch(err){
+            if(routeError) throw new Error('O backend ainda está antigo e o Firebase não permitiu concluir sozinho. Publique a pasta backend-render-v7.9 no Render.');
+            throw err;
+          }
+        }
+        try{await cloudAuth.signOut()}catch(_){}
+      }else{
+        if($('deleteAccountPassword').value!==state.user.password)throw new Error('Senha incorreta.');
+        const uid=state.user.id;
+        state.users=state.users.filter(x=>x.id!==uid);
+        state.transactions=state.transactions.filter(x=>x.userId!==uid);
+        state.goals=state.goals.filter(x=>x.userId!==uid);
+      }
+      state.user=null;state.plan='free';persist();closeModal();showAuth();
+      toast('Conta, login, e-mail, CPF e todos os dados foram excluídos.');
+    }catch(err){
+      btn.disabled=false;btn.textContent='Excluir conta completa';
+      toast(err.code==='auth/wrong-password'||err.code==='auth/invalid-credential'?'Senha incorreta.':(err.message||'Não foi possível excluir completamente a conta.'));
+    }
+  };
 }
 function upgradeModal(){paymentModal()}
 function ownerCenterModal(){
@@ -830,7 +875,7 @@ async function ownerUserDetails(id){
   $('ownerTogglePremium').onclick=async()=>{const active=status==='premium';const data=active?{plan:'free',status:'vencido',subscriptionStatus:'expired',subscriptionUntil:null,expiresAt:null}:{plan:'premium',status:'ativo',subscriptionStatus:'active',subscriptionUntil:nextDueDate(),expiresAt:nextDueDate()};if(cloudReady)await cloudDb.ref(`users/${id}`).update({...data,updatedAt:new Date().toISOString()});Object.assign(u,data);await ownerLog(active?'Premium removido':'Premium liberado',u.email||id);toast(active?'Premium removido.':'Premium liberado por 30 dias.');ownerUserDetails(id)};
   $('ownerToggleBlock').onclick=async()=>{const blocked=status==='blocked',data=blocked?{status:'vencido',subscriptionStatus:'expired',updatedAt:new Date().toISOString()}:{status:'blocked',subscriptionStatus:'blocked',updatedAt:new Date().toISOString()};if(cloudReady)await cloudDb.ref(`users/${id}`).update(data);Object.assign(u,data);await ownerLog(blocked?'Usuário desbloqueado':'Usuário bloqueado',u.email||id);toast(blocked?'Conta desbloqueada.':'Conta bloqueada.');ownerUserDetails(id)};
   $('ownerNotifyUser').onclick=()=>ownerNotificationComposer(u);
-  $('ownerDeleteUser').onclick=async()=>{if(!cloudReady)return toast('A exclusão completa exige conexão com o Firebase.');if(!BACKEND_URL)return toast('Backend não configurado.');if(!confirm(`ATENÇÃO: excluir completamente a conta de ${u.email||u.name||'cliente'}?\n\nIsso apagará login, e-mail do Authentication, CPF, perfil, dados financeiros, notificações e pagamentos vinculados.`))return;if(!confirm('CONFIRMAÇÃO FINAL: esta conta não poderá mais entrar e os dados não poderão ser recuperados.'))return;const btn=$('ownerDeleteUser');btn.disabled=true;btn.textContent='Excluindo conta completa...';try{let deleted=false,lastError=null;for(const route of ['/admin/deleteUser','/admin/delete-user','/admin/users/delete']){try{await apiFetch(route,{method:'POST',body:JSON.stringify({uid:id})});deleted=true;break}catch(err){lastError=err;if(!/rota|route|not found|404/i.test(String(err.message||'')))throw err}}if(!deleted)throw lastError||new Error('Rota de exclusão não encontrada. Atualize o backend no Render.');state.users=state.users.filter(x=>x.id!==id);state.transactions=state.transactions.filter(x=>x.userId!==id);state.goals=state.goals.filter(x=>x.userId!==id);state.payments=state.payments.filter(x=>x.userId!==id);persist();toast('Conta, Authentication, e-mail, CPF e todos os dados foram excluídos.');ownerCenterModal('users')}catch(e){btn.disabled=false;btn.textContent='Excluir conta completa';toast(e.message||'Não foi possível excluir completamente a conta.')}};
+  $('ownerDeleteUser').onclick=async()=>{if(!cloudReady)return toast('A exclusão completa exige conexão com o Firebase.');if(!BACKEND_URL)return toast('Backend não configurado.');if(!confirm(`ATENÇÃO: excluir completamente a conta de ${u.email||u.name||'cliente'}?\n\nIsso apagará login, e-mail do Authentication, CPF, perfil, dados financeiros, notificações e pagamentos vinculados.`))return;if(!confirm('CONFIRMAÇÃO FINAL: esta conta não poderá mais entrar e os dados não poderão ser recuperados.'))return;const btn=$('ownerDeleteUser');btn.disabled=true;btn.textContent='Excluindo conta completa...';try{let deleted=false,lastError=null;for(const route of ['/admin/deleteUser','/admin/delete-user','/admin/users/delete','/api/admin/deleteUser','/api/admin/delete-user','/deleteUser','/delete-user-complete']){try{await apiFetch(route,{method:'POST',body:JSON.stringify({uid:id})});deleted=true;break}catch(err){lastError=err;if(!/rota|route|not found|404/i.test(String(err.message||'')))throw err}}if(!deleted)throw lastError||new Error('Rota de exclusão não encontrada. Atualize o backend no Render.');state.users=state.users.filter(x=>x.id!==id);state.transactions=state.transactions.filter(x=>x.userId!==id);state.goals=state.goals.filter(x=>x.userId!==id);state.payments=state.payments.filter(x=>x.userId!==id);persist();toast('Conta, Authentication, e-mail, CPF e todos os dados foram excluídos.');ownerCenterModal('users')}catch(e){btn.disabled=false;btn.textContent='Excluir conta completa';toast(e.message||'Não foi possível excluir completamente a conta.')}};
 }
 function ownerNotificationComposer(u){openModal(`<button id="notifBack" class="owner-back">← Voltar</button><h2>Enviar notificação</h2><p>Para: <b>${escapeHtml(u.name||u.email||'Usuário')}</b></p><form id="ownerNotifForm" class="form-grid"><label>Título<input id="ownerNotifTitle" value="Aviso do Finance IA Pro" required></label><label>Mensagem<textarea id="ownerNotifMessage" rows="5" required placeholder="Digite a mensagem"></textarea></label><button class="primary">Enviar notificação</button></form>`);$('notifBack').onclick=()=>ownerUserDetails(u.id);$('ownerNotifForm').onsubmit=async e=>{e.preventDefault();const data={title:$('ownerNotifTitle').value.trim(),message:$('ownerNotifMessage').value.trim(),read:false,createdAt:new Date().toISOString()};if(cloudReady)await cloudDb.ref(`userNotifications/${u.id}`).push(data);await ownerLog('Notificação enviada',u.email||u.id);toast('Notificação enviada.');ownerUserDetails(u.id)}}
 function ownerPaymentsPanel(){
