@@ -647,3 +647,19 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 #modal:not(.owner-modal) .modal-card{overflow-y:auto!important;overscroll-behavior:contain!important;-webkit-overflow-scrolling:touch!important;padding-bottom:calc(110px + env(safe-area-inset-bottom,0px))!important}
 #modal:not(.owner-modal) .modal-card::after{content:"";display:block;height:70px;min-height:70px}
 @media(max-width:520px){.owner-payment-actions{grid-template-columns:1fr 1fr!important}.owner-payment-actions .owner-delete-payment{grid-column:1/-1}.owner-payment-actions.single-delete .owner-delete-payment{grid-column:auto}}
+
+/* v7.6 - pesquisa avançada de contas */
+.bill-advanced-search{margin:14px 0;padding:14px;border:1px solid var(--line,#26384d);border-radius:20px;background:rgba(5,18,32,.42)}
+.bill-search-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
+.bill-advanced-search>input{width:100%;min-height:50px;border-radius:15px}
+.bill-filter-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:12px;max-height:600px;overflow:hidden;transition:max-height .25s ease,opacity .2s ease}
+.bill-filter-fields.collapsed{max-height:0;opacity:0;margin-top:0}
+.bill-filter-fields label{font-size:.78rem;color:var(--muted,#9aacbf)}
+.bill-filter-fields input,.bill-filter-fields select{width:100%;margin-top:5px;min-height:44px;border-radius:13px}
+.bill-filter-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.bill-filter-actions button{min-height:44px;padding:8px;font-size:.78rem}
+.bill-filter-summary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:12px 0}
+.bill-filter-summary article{padding:12px;border-radius:16px;border:1px solid var(--line,#26384d);background:rgba(15,35,55,.72)}
+.bill-filter-summary span{display:block;color:var(--muted,#9aacbf);font-size:.72rem;margin-bottom:4px}
+.bill-filter-summary strong{font-size:.98rem}
+@media(max-width:430px){.bill-filter-actions{grid-template-columns:1fr}.bill-filter-fields{grid-template-columns:1fr 1fr}.bill-filter-summary{grid-template-columns:1fr 1fr}}

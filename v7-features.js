@@ -142,23 +142,94 @@
   const originalRender=render;
   render=function(){ originalRender(); addDashboardBlocks(); dashboardV7(); };
 
+  const billFilters={q:'',kind:'all',status:'all',due:'all',start:'',end:'',min:'',max:'',sort:'date-asc'};
+  const normalizeSearch=v=>String(v??'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+  const parseFilterMoney=v=>{const t=String(v||'').trim();if(!t)return null;const n=Number(t.replace(/\./g,'').replace(',','.').replace(/[^0-9.-]/g,''));return Number.isFinite(n)?n:null};
+  function daysFromToday(date){const today=new Date();today.setHours(0,0,0,0);const d=new Date(String(date||'')+'T12:00:00');return Number.isNaN(d.getTime())?999999:Math.ceil((d-today)/86400000)}
+  function applyBillFilters(list){
+    const q=normalizeSearch(billFilters.q),min=parseFilterMoney(billFilters.min),max=parseFilterMoney(billFilters.max);
+    const filtered=list.filter(x=>{
+      const days=daysFromToday(x.dueDate),open=!['paid','received'].includes(x.status);
+      const hay=normalizeSearch([x.description,x.category,x.notes,x.cpf,x.phone,x.telefone,x.email,x.value,x.dueDate,statusText(x.status),x.kind==='payable'?'conta a pagar':'conta a receber'].join(' '));
+      if(q&&!hay.includes(q))return false;
+      if(billFilters.kind!=='all'&&x.kind!==billFilters.kind)return false;
+      if(billFilters.status==='pending'&&(!open||days<0))return false;
+      if(billFilters.status==='settled'&&open)return false;
+      if(billFilters.status==='overdue'&&!(open&&days<0))return false;
+      if(billFilters.status==='paid'&&x.status!=='paid')return false;
+      if(billFilters.status==='received'&&x.status!=='received')return false;
+      if(billFilters.due==='today'&&days!==0)return false;
+      if(billFilters.due==='3days'&&!(days>=0&&days<=3))return false;
+      if(billFilters.due==='7days'&&!(days>=0&&days<=7))return false;
+      if(billFilters.due==='overdue'&&!(open&&days<0))return false;
+      if(billFilters.start&&String(x.dueDate||'')<billFilters.start)return false;
+      if(billFilters.end&&String(x.dueDate||'')>billFilters.end)return false;
+      if(min!==null&&Number(x.value||0)<min)return false;
+      if(max!==null&&Number(x.value||0)>max)return false;
+      return true;
+    });
+    const coll=new Intl.Collator('pt-BR',{sensitivity:'base'});
+    return filtered.sort((a,b)=>{
+      if(billFilters.sort==='date-desc')return String(b.dueDate).localeCompare(String(a.dueDate));
+      if(billFilters.sort==='value-asc')return Number(a.value||0)-Number(b.value||0);
+      if(billFilters.sort==='value-desc')return Number(b.value||0)-Number(a.value||0);
+      if(billFilters.sort==='name-asc')return coll.compare(a.description||'',b.description||'');
+      if(billFilters.sort==='name-desc')return coll.compare(b.description||'',a.description||'');
+      if(billFilters.sort==='newest')return Number(b.createdAt||0)-Number(a.createdAt||0);
+      if(billFilters.sort==='oldest')return Number(a.createdAt||0)-Number(b.createdAt||0);
+      return String(a.dueDate).localeCompare(String(b.dueDate));
+    });
+  }
+  function billSummaryHtml(list){
+    const open=list.filter(x=>!['paid','received'].includes(x.status));
+    const overdue=open.filter(x=>daysFromToday(x.dueDate)<0);
+    const payable=open.filter(x=>x.kind==='payable'),receivable=open.filter(x=>x.kind==='receivable');
+    const settled=list.filter(x=>['paid','received'].includes(x.status));
+    return `<div class="bill-filter-summary"><article><span>Encontrados</span><strong>${list.length}</strong></article><article><span>A pagar</span><strong>${money(centsSum(payable))}</strong></article><article><span>A receber</span><strong>${money(centsSum(receivable))}</strong></article><article><span>Vencido</span><strong>${money(centsSum(overdue))}</strong></article><article><span>Baixado</span><strong>${money(centsSum(settled))}</strong></article></div>`;
+  }
+  function billsFilterPanelHtml(){return `<section class="bill-advanced-search">
+      <div class="bill-search-title"><b>🔎 Pesquisa avançada</b><button id="toggleBillFilters" type="button" class="link-btn">Filtros</button></div>
+      <input id="billSearch" value="${escapeHtml(billFilters.q)}" placeholder="Nome, categoria, observação, CPF, telefone ou valor">
+      <div id="billFilterFields" class="bill-filter-fields">
+        <label>Tipo<select id="billKindFilter"><option value="all">Todos</option><option value="payable">A pagar</option><option value="receivable">A receber</option></select></label>
+        <label>Status<select id="billStatusFilter"><option value="all">Todos</option><option value="pending">Pendentes</option><option value="settled">Pagos/recebidos</option><option value="overdue">Vencidos</option><option value="paid">Pagos</option><option value="received">Recebidos</option></select></label>
+        <label>Vencimento<select id="billDueFilter"><option value="all">Qualquer data</option><option value="today">Vence hoje</option><option value="3days">Próximos 3 dias</option><option value="7days">Próximos 7 dias</option><option value="overdue">Já vencidas</option></select></label>
+        <label>Ordenar<select id="billSort"><option value="date-asc">Data mais próxima</option><option value="date-desc">Data mais distante</option><option value="value-desc">Maior valor</option><option value="value-asc">Menor valor</option><option value="name-asc">Nome A–Z</option><option value="name-desc">Nome Z–A</option><option value="newest">Mais recentes</option><option value="oldest">Mais antigos</option></select></label>
+        <label>Data inicial<input id="billStart" type="date" value="${billFilters.start}"></label><label>Data final<input id="billEnd" type="date" value="${billFilters.end}"></label>
+        <label>Valor mínimo<input id="billMin" inputmode="decimal" value="${escapeHtml(billFilters.min)}" placeholder="0,00"></label><label>Valor máximo<input id="billMax" inputmode="decimal" value="${escapeHtml(billFilters.max)}" placeholder="0,00"></label>
+      </div>
+      <div class="bill-filter-actions"><button id="clearBillFilters" class="secondary" type="button">Limpar</button><button id="exportFilteredBills" class="secondary" type="button">Exportar resultados</button><button id="deleteFilteredBills" class="danger-button" type="button">Excluir resultados</button></div>
+    </section>`}
   function financeHubModal(tab='bills'){
     if(!canUsePremiumApp()) return paymentModal();
-    const bills=onlyMine(state.bills).sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));
+    const allBills=onlyMine(state.bills);
+    const bills=applyBillFilters(allBills);
     const cards=onlyMine(state.cards);
     const installments=onlyMine(state.installments);
     openModal(`<h2>Gestão financeira completa</h2>
       <div class="v7-tabs"><button data-v7tab="bills" class="${tab==='bills'?'active':''}">Contas</button><button data-v7tab="cards" class="${tab==='cards'?'active':''}">Cartões</button><button data-v7tab="installments" class="${tab==='installments'?'active':''}">Parcelamentos</button></div>
       <div class="modal-actions"><button id="newPayable" class="primary">+ Conta a pagar</button><button id="newReceivable" class="secondary">+ Conta a receber</button>${tab==='cards'?'<button id="newCard" class="secondary">+ Cartão</button>':''}${tab==='installments'?'<button id="newInstallment" class="secondary">+ Parcelamento</button>':''}</div>
-      <div class="v7-list">${tab==='bills'?renderBillsHtml(bills):tab==='cards'?renderCardsHtml(cards):renderInstallmentsHtml(installments)}</div>`);
+      ${tab==='bills'?billsFilterPanelHtml()+`<div id="billFilterSummary">${billSummaryHtml(bills)}</div>`:''}
+      <div id="financeResultList" class="v7-list">${tab==='bills'?renderBillsHtml(bills):tab==='cards'?renderCardsHtml(cards):renderInstallmentsHtml(installments)}</div>`);
     document.querySelectorAll('[data-v7tab]').forEach(b=>b.onclick=()=>financeHubModal(b.dataset.v7tab));
     $('newPayable').onclick=()=>billFormModal('payable'); $('newReceivable').onclick=()=>billFormModal('receivable');
     if($('newCard'))$('newCard').onclick=cardFormModal;
     if($('newInstallment'))$('newInstallment').onclick=installmentFormModal;
-    document.querySelectorAll('[data-bill]').forEach(b=>b.onclick=()=>billDetailsModal(b.dataset.bill));
-    document.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>cardDetailsModal(b.dataset.card));
-    document.querySelectorAll('[data-installment]').forEach(b=>b.onclick=()=>installmentDetailsModal(b.dataset.installment));
+    const bindRows=()=>{document.querySelectorAll('[data-bill]').forEach(b=>b.onclick=()=>billDetailsModal(b.dataset.bill));document.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>cardDetailsModal(b.dataset.card));document.querySelectorAll('[data-installment]').forEach(b=>b.onclick=()=>installmentDetailsModal(b.dataset.installment));};
+    bindRows();
+    if(tab==='bills'){
+      const map={billKindFilter:'kind',billStatusFilter:'status',billDueFilter:'due',billSort:'sort',billStart:'start',billEnd:'end',billMin:'min',billMax:'max'};
+      Object.entries(map).forEach(([id,key])=>{const el=$(id);if(el){el.value=billFilters[key];el.oninput=()=>{billFilters[key]=el.value;refreshBillResults()}}});
+      $('billSearch').oninput=()=>{billFilters.q=$('billSearch').value;refreshBillResults()};
+      $('toggleBillFilters').onclick=()=>document.getElementById('billFilterFields').classList.toggle('collapsed');
+      $('clearBillFilters').onclick=()=>{Object.assign(billFilters,{q:'',kind:'all',status:'all',due:'all',start:'',end:'',min:'',max:'',sort:'date-asc'});financeHubModal('bills')};
+      $('exportFilteredBills').onclick=()=>exportBillsCsv(applyBillFilters(onlyMine(state.bills)));
+      $('deleteFilteredBills').onclick=()=>deleteFilteredBills(applyBillFilters(onlyMine(state.bills)));
+    }
+    function refreshBillResults(){const results=applyBillFilters(onlyMine(state.bills));$('financeResultList').innerHTML=renderBillsHtml(results);$('billFilterSummary').innerHTML=billSummaryHtml(results);bindRows()}
   }
+  function exportBillsCsv(list){if(!list.length)return toast('Nenhum resultado para exportar.');const rows=[['Tipo','Descrição','Categoria','Valor','Vencimento','Status','Observação'],...list.map(x=>[x.kind==='payable'?'Conta a pagar':'Conta a receber',x.description,x.category,Number(x.value||0).toFixed(2).replace('.',','),x.dueDate,statusText(x.status),x.notes||''])];const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='finance-ia-pro-contas-filtradas.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Resultados filtrados exportados.');}
+  async function deleteFilteredBills(list){if(!list.length)return toast('Nenhum resultado para excluir.');if(!confirm(`Excluir ${list.length} conta(s) encontradas?`))return;if(!confirm('Esta ação não pode ser desfeita. Confirma novamente?'))return;const ids=new Set(list.map(x=>x.id));state.bills=state.bills.filter(x=>!ids.has(x.id));saveV7Local();persist();if(cloudReady){const updates={};list.forEach(x=>updates[x.id]=null);await cloudDb.ref(`finance/${state.user.id}/bills`).update(updates)}financeHubModal('bills');render();toast(`${list.length} conta(s) excluída(s).`);}
   const renderBillsHtml=list=>list.length?list.map(x=>{const today=new Date();today.setHours(0,0,0,0);const due=new Date(String(x.dueDate||'')+'T12:00:00');const open=!['paid','received'].includes(x.status);const days=Number.isNaN(due.getTime())?999:Math.ceil((due-today)/86400000);const cls=open&&days<0?' bill-overdue':open&&days<=3?' bill-due-soon':'';const alert=open&&days<0?' • Vencida':open&&days===0?' • Vence hoje':open&&days<=3?` • Vence em ${days} dia(s)`:'';return `<button class="record-row${cls}" data-bill="${x.id}"><span>${x.kind==='payable'?'↘':'↗'}</span><div><b>${escapeHtml(x.description)}</b><small>${dateBR(x.dueDate)} • ${statusText(x.status)}${alert}</small></div><strong>${money(x.value)}</strong></button>`}).join(''):'<div class="empty-state">Nenhuma conta cadastrada.</div>';
   const renderCardsHtml=list=>list.length?list.map(x=>`<button class="record-row" data-card="${x.id}"><span>💳</span><div><b>${escapeHtml(x.name)}</b><small>Fecha dia ${x.closingDay} • Vence dia ${x.dueDay}</small></div><strong>${money(x.currentInvoice||0)}</strong></button>`).join(''):'<div class="empty-state">Nenhum cartão cadastrado.</div>';
   const renderInstallmentsHtml=list=>list.length?list.map(x=>`<button class="record-row" data-installment="${x.id}"><span>≡</span><div><b>${escapeHtml(x.description)}</b><small>${x.paid||0}/${x.total} parcelas</small></div><strong>${money(x.installmentValue)}</strong></button>`).join(''):'<div class="empty-state">Nenhum parcelamento cadastrado.</div>';
