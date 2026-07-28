@@ -115,6 +115,19 @@
       document.querySelectorAll('[data-open-bill]').forEach(b=>b.onclick=()=>billDetailsModal(b.dataset.openBill));
     }
     if($('smartInsight')) $('smartInsight').innerHTML=buildInsight(income,expense,payable,receivable);
+    notifyUpcomingBills(pendingPay);
+  }
+
+  function notifyUpcomingBills(pendingPay){
+    const today=new Date();today.setHours(0,0,0,0);
+    const urgent=pendingPay.filter(x=>{const d=new Date(String(x.dueDate||'')+'T12:00:00');if(Number.isNaN(d.getTime()))return false;const days=Math.ceil((d-today)/86400000);return days<=3;}).sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));
+    if(!urgent.length)return;
+    const key='fia_due_alert_'+today.toISOString().slice(0,10)+'_'+state.user.id;
+    if(sessionStorage.getItem(key))return;sessionStorage.setItem(key,'1');
+    const overdue=urgent.filter(x=>new Date(String(x.dueDate)+'T12:00:00')<today).length;
+    const dueToday=urgent.filter(x=>new Date(String(x.dueDate)+'T12:00:00').toDateString()===today.toDateString()).length;
+    const message=overdue?`${overdue} conta(s) vencida(s).`:dueToday?`${dueToday} conta(s) vencem hoje.`:`${urgent.length} conta(s) vencem nos próximos 3 dias.`;
+    setTimeout(()=>toast('⚠ '+message),600);
   }
 
   function buildInsight(income,expense,payable,receivable){
@@ -146,7 +159,7 @@
     document.querySelectorAll('[data-card]').forEach(b=>b.onclick=()=>cardDetailsModal(b.dataset.card));
     document.querySelectorAll('[data-installment]').forEach(b=>b.onclick=()=>installmentDetailsModal(b.dataset.installment));
   }
-  const renderBillsHtml=list=>list.length?list.map(x=>`<button class="record-row" data-bill="${x.id}"><span>${x.kind==='payable'?'↘':'↗'}</span><div><b>${escapeHtml(x.description)}</b><small>${dateBR(x.dueDate)} • ${statusText(x.status)}</small></div><strong>${money(x.value)}</strong></button>`).join(''):'<div class="empty-state">Nenhuma conta cadastrada.</div>';
+  const renderBillsHtml=list=>list.length?list.map(x=>{const today=new Date();today.setHours(0,0,0,0);const due=new Date(String(x.dueDate||'')+'T12:00:00');const open=!['paid','received'].includes(x.status);const days=Number.isNaN(due.getTime())?999:Math.ceil((due-today)/86400000);const cls=open&&days<0?' bill-overdue':open&&days<=3?' bill-due-soon':'';const alert=open&&days<0?' • Vencida':open&&days===0?' • Vence hoje':open&&days<=3?` • Vence em ${days} dia(s)`:'';return `<button class="record-row${cls}" data-bill="${x.id}"><span>${x.kind==='payable'?'↘':'↗'}</span><div><b>${escapeHtml(x.description)}</b><small>${dateBR(x.dueDate)} • ${statusText(x.status)}${alert}</small></div><strong>${money(x.value)}</strong></button>`}).join(''):'<div class="empty-state">Nenhuma conta cadastrada.</div>';
   const renderCardsHtml=list=>list.length?list.map(x=>`<button class="record-row" data-card="${x.id}"><span>💳</span><div><b>${escapeHtml(x.name)}</b><small>Fecha dia ${x.closingDay} • Vence dia ${x.dueDay}</small></div><strong>${money(x.currentInvoice||0)}</strong></button>`).join(''):'<div class="empty-state">Nenhum cartão cadastrado.</div>';
   const renderInstallmentsHtml=list=>list.length?list.map(x=>`<button class="record-row" data-installment="${x.id}"><span>≡</span><div><b>${escapeHtml(x.description)}</b><small>${x.paid||0}/${x.total} parcelas</small></div><strong>${money(x.installmentValue)}</strong></button>`).join(''):'<div class="empty-state">Nenhum parcelamento cadastrado.</div>';
 
