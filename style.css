@@ -675,3 +675,13 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 
 /* v10.0.4 - ações completas em registros */
 .v10-row-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.v10-row-actions button{width:auto;min-width:92px;padding:11px 14px}.subscription-row{align-items:flex-start}.subscription-row .v10-row-actions{max-width:100%}@media(max-width:520px){.v10-row{align-items:flex-start;gap:12px}.v10-row-actions{width:100%;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}.v10-row-actions .primary:first-child:nth-last-child(3){grid-column:1/-1}.v10-row-actions button{width:100%;min-width:0}.monthly-entry-delete{width:auto!important}}
+
+
+/* v10.0.5 — histórico e sincronização consolidada */
+.v10-history-header{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:14px}
+.v10-history-header h2{margin:0 0 4px}
+.v10-history-clear{width:auto!important;min-width:112px;padding:10px 14px!important;font-size:14px!important;border-radius:14px!important}
+.v10-history-row{position:relative;padding-right:54px!important}
+.v10-audit-delete{position:absolute;right:14px;top:50%;transform:translateY(-50%);width:30px;height:30px;min-width:30px;padding:0;border:1px solid rgba(255,92,117,.45);border-radius:50%;background:rgba(255,55,88,.12);color:#ff7189;font-size:22px;line-height:28px;font-weight:700;display:grid;place-items:center}
+.v10-audit-delete:active{transform:translateY(-50%) scale(.92)}
+@media(max-width:520px){.v10-history-header{align-items:stretch}.v10-history-clear{min-width:96px;padding:9px 11px!important}.v10-history-row{padding-right:48px!important}}

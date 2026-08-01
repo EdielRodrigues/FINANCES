@@ -1,4 +1,4 @@
-const CACHE='finance-ia-pro-v10.0.4';
+const CACHE='finance-ia-pro-v10.0.5';
 const FILES=['./','./index.html','./style.css','./app.js','./v7-features.js','./v10-features.js','./config.js','./manifest.json','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',event=>{self.skipWaiting();event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(FILES)));});
 self.addEventListener('activate',event=>{event.waitUntil(Promise.all([self.clients.claim(),caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k))))]));});

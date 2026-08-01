@@ -94,6 +94,17 @@
         if (cloudReady && uid()) cloudSet('audit', item).catch(() => {});
       }
 
+      async function deleteAuditItem(itemId) {
+        state.audit = (state.audit || []).filter(item => !(item.userId === uid() && item.id === itemId));
+        saveLocal('audit');
+        if (cloudReady && uid()) await cloudRemove('audit', itemId);
+      }
+      async function clearAuditHistory() {
+        state.audit = (state.audit || []).filter(item => item.userId !== uid());
+        saveLocal('audit');
+        if (cloudReady && uid()) await cloudDb.ref(`finance/${uid()}/v10/audit`).remove();
+      }
+
       const previousSubscribe = subscribeCloudData;
       subscribeCloudData = function(userId) {
         previousSubscribe(userId);
@@ -164,7 +175,8 @@
         const upcomingBills = mine(state.bills || []).filter(x=>!['paid','received'].includes(x.status));
         const toReceive = upcomingBills.filter(x=>x.kind==='receivable').reduce((s,x)=>s+Number(x.value||0),0);
         const toPay = upcomingBills.filter(x=>x.kind==='payable').reduce((s,x)=>s+Number(x.value||0),0);
-        const forecast = banks + toReceive - toPay - subscriptions;
+        const monthlyOpen = mine(state.monthlyClients || []).reduce((sum,client)=>sum+(client.entries||[]).reduce((s,entry)=>s+Number(entry.value||0),0),0);
+        const forecast = banks + toReceive + monthlyOpen - toPay - subscriptions;
         const put=(id,value)=>{const el=document.getElementById(id);if(el)el.textContent=moneyText(value)};
         put('v10BankBalance',banks); put('v10SubscriptionsTotal',subscriptions); put('v10LoansTotal',loans); put('v10Forecast',forecast);
       }
@@ -290,11 +302,34 @@
       function cashFlowModal() {
         const tx = userTx();
         const bills = mine(state.bills || []);
+        const monthlyClients = mine(state.monthlyClients || []);
         const months = {};
-        tx.forEach(x => { const month=String(x.date||'').slice(0,7)||'Sem data'; months[month]=months[month]||{income:0,expense:0}; months[month][x.type==='income'?'income':'expense'] += Number(x.value||0); });
+        tx.forEach(x => {
+          const month=String(x.date||'').slice(0,7)||'Sem data';
+          months[month]=months[month]||{income:0,expense:0};
+          months[month][x.type==='income'?'income':'expense'] += Number(x.value||0);
+        });
         const rows = Object.entries(months).sort((a,b)=>b[0].localeCompare(a[0])).map(([month,v])=>`<div class="v10-flow-row"><b>${esc(month)}</b><span class="income">+ ${moneyText(v.income)}</span><span class="expense">− ${moneyText(v.expense)}</span><strong>${moneyText(v.income-v.expense)}</strong></div>`).join('');
         const pending = bills.filter(x=>!['paid','received'].includes(x.status));
-        openModal(`<h2>Fluxo de caixa</h2><div class="v10-metrics"><article><span>Meses analisados</span><strong>${Object.keys(months).length}</strong></article><article><span>Compromissos abertos</span><strong>${pending.length}</strong></article></div><div class="v10-flow">${rows||'<div class="empty-state">Cadastre lançamentos para gerar o fluxo de caixa.</div>'}</div>`);
+        const pendingPay = pending.filter(x=>x.kind==='payable').reduce((s,x)=>s+Number(x.value||0),0);
+        const pendingReceive = pending.filter(x=>x.kind==='receivable').reduce((s,x)=>s+Number(x.value||0),0);
+        const monthlyOpen = monthlyClients.reduce((sum,client)=>sum+(client.entries||[]).reduce((s,entry)=>s+Number(entry.value||0),0),0);
+        const monthlyRows = monthlyClients.filter(c=>(c.entries||[]).length).map(c=>{
+          const total=(c.entries||[]).reduce((s,e)=>s+Number(e.value||0),0);
+          return `<article class="v10-row"><div><b>${esc(c.name)}</b><small>${(c.entries||[]).length} lançamento(s) em aberto • fechamento dia ${c.closingDay||30}</small></div><strong>${moneyText(total)}</strong></article>`;
+        }).join('');
+        openModal(`<h2>Fluxo de caixa consolidado</h2>
+          <p class="muted">Receitas, despesas, contas e clientes mensais usam o mesmo histórico financeiro.</p>
+          <div class="v10-metrics">
+            <article><span>Meses analisados</span><strong>${Object.keys(months).length}</strong></article>
+            <article><span>Contas a pagar</span><strong>${moneyText(pendingPay)}</strong></article>
+            <article><span>Contas a receber</span><strong>${moneyText(pendingReceive)}</strong></article>
+            <article><span>Clientes mensais em aberto</span><strong>${moneyText(monthlyOpen)}</strong></article>
+          </div>
+          <h3>Movimentação realizada</h3>
+          <div class="v10-flow">${rows||'<div class="empty-state">Cadastre lançamentos para gerar o fluxo de caixa.</div>'}</div>
+          <h3>Valores ainda em aberto</h3>
+          <div class="v10-list">${monthlyRows||'<div class="empty-state">Nenhum acerto mensal em aberto.</div>'}</div>`);
       }
 
       function walletsModal() {
@@ -353,12 +388,27 @@
         $('monthlyEntryForm').onsubmit=async e=>{e.preventDefault();client.entries=client.entries||[];client.entries.push({id:id(),description:$('monthlyEntryDescription').value.trim(),value:numberValue($('monthlyEntryValue').value),date:$('monthlyEntryDate').value,createdAt:Date.now()});await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);toast('Valor adicionado ao acerto mensal.');};
         document.querySelectorAll('.monthly-entry-delete').forEach(b=>b.onclick=async()=>{client.entries=(client.entries||[]).filter(e=>e.id!==b.dataset.id);await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);});
         $('monthlyBack').onclick=()=>monthlyClientsModal();
-        $('monthlyReceiveAll').onclick=async()=>{if(total<=0)return;if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;const now=Date.now();const tx={id:id(),userId:uid(),type:'income',description:`Acerto mensal - ${client.name}`,value:total,category:client.category||'Serviços',date:todayISO(),createdAt:now,sourceMonthlyClientId:client.id,itemsCount:entries.length};state.transactions.push(tx);client.settlements=client.settlements||[];client.settlements.unshift({id:id(),value:total,date:todayISO(),createdAt:now,entries:[...entries]});client.entries=[];client.lastReceivedAt=now;client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);await updateItem('monthlyClients',client.id,{entries:client.entries,settlements:client.settlements,lastReceivedAt:now,nextClosingDate:client.nextClosingDate});if(typeof persist==='function')persist();if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}monthlyClientDetails(client.id);if(typeof render==='function')render();toast('Acerto recebido, salvo nas receitas e lançamentos abertos limpos.');};
+        $('monthlyReceiveAll').onclick=async()=>{if(total<=0)return;if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;const now=Date.now();const tx={id:id(),userId:uid(),type:'income',description:`Acerto mensal - ${client.name}`,value:total,category:client.category||'Serviços',date:todayISO(),createdAt:now,sourceMonthlyClientId:client.id,sourceType:'monthlyClient',itemsCount:entries.length,status:'received'};state.transactions.push(tx);client.settlements=client.settlements||[];client.settlements.unshift({id:id(),value:total,date:todayISO(),createdAt:now,entries:[...entries]});client.entries=[];client.lastReceivedAt=now;client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);await updateItem('monthlyClients',client.id,{entries:client.entries,settlements:client.settlements,lastReceivedAt:now,nextClosingDate:client.nextClosingDate});if(typeof persist==='function')persist();if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}monthlyClientDetails(client.id);if(typeof render==='function')render();toast('Acerto recebido, salvo nas receitas e lançamentos abertos limpos.');};
       }
 
       function auditModal() {
         const list=mine(state.audit).sort((a,b)=>Number(b.createdAt)-Number(a.createdAt));
-        openModal(`<h2>Histórico de atividades</h2><div class="v10-list">${list.length?list.map(x=>`<article class="v10-row"><div><b>${esc(x.action)}</b><small>${new Date(x.createdAt).toLocaleString('pt-BR')}</small></div></article>`).join(''):'<div class="empty-state">Nenhuma atividade registrada.</div>'}</div>`);
+        openModal(`<div class="v10-history-header"><div><h2>Histórico de atividades</h2><p class="muted">Ações sincronizadas desta conta.</p></div>${list.length?'<button id="clearAuditHistory" class="danger-button v10-history-clear">Excluir tudo</button>':''}</div>
+          <div class="v10-list">${list.length?list.map(x=>`<article class="v10-row v10-history-row"><div><b>${esc(x.action)}</b><small>${new Date(x.createdAt).toLocaleString('pt-BR')}</small></div><button type="button" class="v10-audit-delete" data-id="${x.id}" aria-label="Excluir atividade" title="Excluir">×</button></article>`).join(''):'<div class="empty-state">Nenhuma atividade registrada.</div>'}</div>`);
+        document.querySelectorAll('.v10-audit-delete').forEach(btn=>btn.onclick=async()=>{
+          if(!confirm('Tem certeza que quer excluir esta atividade?'))return;
+          await deleteAuditItem(btn.dataset.id);
+          auditModal();
+          toast('Atividade excluída.');
+        });
+        const clearBtn=$('clearAuditHistory');
+        if(clearBtn) clearBtn.onclick=async()=>{
+          if(!confirm('Tem certeza que quer excluir todo o histórico?'))return;
+          clearBtn.disabled=true; clearBtn.textContent='Excluindo...';
+          await clearAuditHistory();
+          auditModal();
+          toast('Histórico excluído.');
+        };
       }
 
       function dashboardSettingsModal() {
