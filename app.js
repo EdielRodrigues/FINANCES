@@ -303,7 +303,7 @@ function renderGoals(){
 function escapeHtml(v){return String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 
 function transactionModal(type){
-  if(!canUsePremiumApp()) return paymentModal();
+  if(!canUseTrialTransactions()) return paymentModal();
   openModal(`<h2>${type==='income'?'Nova receita':'Nova despesa'}</h2><form id="transactionForm" class="form-grid"><label>Descrição<input id="txDescription" required placeholder="Ex.: Salário, mercado..." /></label><label>Valor<input id="txValue" type="text" inputmode="decimal" required placeholder="Ex.: 7.000,50" /></label><label>Categoria<select id="txCategory"><option>${type==='income'?'Salário':'Alimentação'}</option><option>${type==='income'?'Venda':'Moradia'}</option><option>${type==='income'?'Freelance':'Transporte'}</option><option>${type==='income'?'Outros':'Saúde'}</option><option>Lazer</option><option>Outros</option></select></label><label>Data<input id="txDate" type="date" value="${todayISO()}" required /></label><button class="primary" type="submit">Salvar lançamento</button></form>`);
   const txValueInput=$('txValue');
   enableLiveMoneyMask(txValueInput);
@@ -458,7 +458,14 @@ function subscriptionActive(u=state.user){
   return trialActive(u);
 }
 function accessPlan(u=state.user){return isOwner()||subscriptionActive(u)?'premium':'free'}
-function canUsePremiumApp(){return subscriptionActive()}
+function paidSubscriptionActive(u=state.user){
+  if(isOwner()) return true;
+  const status=String(u?.subscriptionStatus||u?.status||'').toLowerCase();
+  const until=u?.expiresAt||u?.subscriptionUntil;
+  return ['active','ativo'].includes(status) && Boolean(until) && new Date(until).getTime()>Date.now();
+}
+function canUseTrialTransactions(){return isOwner()||trialActive()||paidSubscriptionActive()}
+function canUsePremiumApp(){return isOwner()||paidSubscriptionActive()}
 function accessExpired(){return Boolean(state.user&&!isOwner()&&!subscriptionActive())}
 function applyAccessLockUI(){
   const app=$('appScreen');
@@ -759,7 +766,7 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister()));
     caches?.keys?.().then(keys=>keys.forEach(k=>caches.delete(k)));
   }else{
-    navigator.serviceWorker.register('service-worker.js?v=7.8',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+    navigator.serviceWorker.register('service-worker.js?v=10.0.3',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
   }
 }
 setInterval(()=>{if(state.user&&!isOwner()){state.plan=accessPlan();if(!subscriptionActive())checkSubscriptionAccess();else render();}},60000);
