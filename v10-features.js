@@ -17,7 +17,8 @@
         documents: { label: 'Documentos', icon: '📂' },
         planning: { label: 'Planejamento', icon: '🗓️' },
         audit: { label: 'Histórico', icon: '🛡️' },
-        dashboardSettings: { label: 'Personalizar', icon: '⚙️' }
+        dashboardSettings: { label: 'Personalizar', icon: '⚙️' },
+        monthlyClients: { label: 'Clientes mensais', icon: '📆' }
       };
 
       const safeRead = (key, fallback = []) => {
@@ -62,6 +63,28 @@
         await cloudRemove(type, itemId);
         addAudit(`Excluiu registro de ${MODULES[type]?.label || type}`, itemId);
       }
+      async function updateItem(type, itemId, changes) {
+        const item = (state[type] || []).find(x => x.id === itemId);
+        if (!item) return null;
+        Object.assign(item, changes, { updatedAt: Date.now() });
+        saveLocal(type);
+        await cloudSet(type, item);
+        addAudit(`Editou registro em ${MODULES[type]?.label || type}`, itemId);
+        return item;
+      }
+      function nextMonthDate(value, fallbackDay = 1) {
+        const base = value ? new Date(`${value}T12:00:00`) : new Date();
+        const originalDay = Number(fallbackDay || base.getDate() || 1);
+        const next = new Date(base.getFullYear(), base.getMonth() + 1, 1, 12, 0, 0);
+        const max = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
+        next.setDate(Math.min(originalDay, max));
+        return next.toISOString().slice(0, 10);
+      }
+      function bindMoneyInput(el) {
+        if (!el) return;
+        if (typeof enableLiveMoneyMask === 'function') enableLiveMoneyMask(el);
+      }
+      function bindV10MoneyInputs(...ids) { ids.forEach(key => bindMoneyInput($(key))); }
       function addAudit(action, targetId = '') {
         const item = { id: id(), userId: uid(), action, targetId, createdAt: Date.now() };
         state.audit = state.audit || [];
@@ -103,7 +126,8 @@
           ['wallets','👨‍👩‍👧','Carteiras'], ['clients','👥','Clientes'],
           ['suppliers','🚚','Fornecedores'], ['receipts','🧾','Recibos'],
           ['documents','📂','Documentos'], ['planning','🗓️','Planejamento'],
-          ['audit','🛡️','Histórico'], ['dashboardSettings','⚙️','Personalizar']
+          ['monthlyClients','📆','Clientes mensais'], ['audit','🛡️','Histórico'],
+          ['dashboardSettings','⚙️','Personalizar']
         ];
         quick.insertAdjacentHTML('beforeend', items.map(x => quickButtonHtml(...x)).join(''));
         items.forEach(([key]) => {
@@ -158,7 +182,7 @@
           bankAccounts: bankAccountsModal, subscriptions: subscriptionsModal, loans: loansModal,
           cashFlow: cashFlowModal, wallets: walletsModal, clients: clientsModal,
           suppliers: suppliersModal, receipts: receiptsModal, documents: documentsModal,
-          planning: planningModal, audit: auditModal, dashboardSettings: dashboardSettingsModal
+          planning: planningModal, monthlyClients: monthlyClientsModal, audit: auditModal, dashboardSettings: dashboardSettingsModal
         };
         handlers[type]?.();
       }
@@ -168,17 +192,43 @@
         return list.length ? list.map(item => `
           <article class="v10-row">
             <div><b>${esc(item.name || item.description || item.title || 'Registro')}</b>
-            <small>${item.value != null ? moneyText(item.value) : item.balance != null ? moneyText(item.balance) : ''}${item.date ? ` • ${brDate(item.date)}` : ''}${item.status ? ` • ${esc(item.status)}` : ''}</small></div>
-            <button class="danger-button v10-delete" data-type="${type}" data-id="${item.id}">Excluir</button>
+            <small>${item.value != null ? moneyText(item.value) : item.balance != null ? moneyText(item.balance) : ''}${item.date ? ` • ${brDate(item.date)}` : ''}${item.dueDate ? ` • vence ${brDate(item.dueDate)}` : ''}${item.status ? ` • ${esc(item.status)}` : ''}</small></div>
+            <div class="v10-row-actions"><button class="secondary v10-edit" data-type="${type}" data-id="${item.id}">Editar</button><button class="danger-button v10-delete" data-type="${type}" data-id="${item.id}">Excluir</button></div>
           </article>`).join('') : `<div class="empty-state">${empty}</div>`;
       }
-      function bindDeletes(reopen) {
+      function bindRowActions(reopen) {
         document.querySelectorAll('.v10-delete').forEach(btn => btn.onclick = async () => {
           if (!confirm('Excluir este registro?')) return;
           await deleteItem(btn.dataset.type, btn.dataset.id);
           reopen();
           toast('Registro excluído.');
         });
+        document.querySelectorAll('.v10-edit').forEach(btn => btn.onclick = () => genericEditModal(btn.dataset.type, btn.dataset.id, reopen));
+      }
+      const bindDeletes = bindRowActions;
+      function genericEditModal(type, itemId, reopen) {
+        const item = (state[type] || []).find(x => x.id === itemId);
+        if (!item) return;
+        const hasValue = item.value != null;
+        const hasBalance = item.balance != null;
+        const hasDate = item.date != null || item.dueDate != null;
+        openModal(`<h2>Editar ${esc(MODULES[type]?.label || 'registro')}</h2><form id="v10GenericEdit" class="form-grid">
+          <label>Nome/descrição<input id="v10EditName" value="${esc(item.name || item.description || item.title || '')}" required></label>
+          ${hasValue ? `<label>Valor<input id="v10EditValue" inputmode="decimal" value="${esc(moneyText(item.value).replace(/[^0-9,.-]/g,''))}"></label>` : ''}
+          ${hasBalance ? `<label>Saldo/valor<input id="v10EditBalance" inputmode="decimal" value="${esc(moneyText(item.balance).replace(/[^0-9,.-]/g,''))}"></label>` : ''}
+          ${hasDate ? `<label>Data<input id="v10EditDate" type="date" value="${esc(item.dueDate || item.date || '')}"></label>` : ''}
+          <label>Categoria<input id="v10EditCategory" value="${esc(item.category || '')}"></label>
+          <label>Status<select id="v10EditStatus"><option value="active" ${item.status==='active'?'selected':''}>Ativo</option><option value="pending" ${item.status==='pending'?'selected':''}>Pendente</option><option value="paid" ${item.status==='paid'?'selected':''}>Pago</option><option value="received" ${item.status==='received'?'selected':''}>Recebido</option><option value="paused" ${item.status==='paused'?'selected':''}>Pausado</option></select></label>
+          <label>Observações<textarea id="v10EditNotes">${esc(item.notes || '')}</textarea></label>
+          <button class="primary">Salvar alterações</button></form>`);
+        bindV10MoneyInputs('v10EditValue','v10EditBalance');
+        $('v10GenericEdit').onsubmit = async e => { e.preventDefault(); const changes={};
+          const name=$('v10EditName').value.trim(); if ('description' in item && !('name' in item)) changes.description=name; else if ('title' in item && !('name' in item)) changes.title=name; else changes.name=name;
+          if (hasValue) changes.value=numberValue($('v10EditValue').value);
+          if (hasBalance) changes.balance=numberValue($('v10EditBalance').value);
+          if (hasDate) { if (item.dueDate != null) changes.dueDate=$('v10EditDate').value; else changes.date=$('v10EditDate').value; }
+          changes.category=$('v10EditCategory').value.trim(); changes.status=$('v10EditStatus').value; changes.notes=$('v10EditNotes').value.trim();
+          await updateItem(type,itemId,changes); reopen(); toast('Registro atualizado.'); };
       }
 
       function bankAccountsModal() {
@@ -189,21 +239,37 @@
             <label>Saldo atual<input id="v10BankBalanceInput" inputmode="decimal" required placeholder="0,00"></label>
             <button class="primary">Adicionar conta</button>
           </form><div class="v10-list">${listHtml('bankAccounts')}</div>`);
+        bindV10MoneyInputs('v10BankBalanceInput');
         $('v10BankForm').onsubmit = async e => { e.preventDefault(); await addItem('bankAccounts',{name:$('v10BankName').value,type:$('v10BankType').value,balance:numberValue($('v10BankBalanceInput').value)}); bankAccountsModal(); toast('Conta adicionada.'); };
         bindDeletes(bankAccountsModal);
       }
 
-      function subscriptionsModal() {
-        openModal(`<h2>Assinaturas e despesas recorrentes</h2>
+      function subscriptionsModal(editId = null) {
+        const editing = editId ? (state.subscriptions || []).find(x => x.id === editId) : null;
+        const rows = mine(state.subscriptions).map(item => `<article class="v10-row subscription-row"><div><b>${esc(item.name)}</b><small>${moneyText(item.value)} • Próxima cobrança: ${brDate(item.dueDate || nextMonthDate('', item.day || 1))}${item.lastPaidAt ? ` • Último pagamento: ${new Date(item.lastPaidAt).toLocaleDateString('pt-BR')}` : ''}</small></div><div class="v10-row-actions"><button class="primary v10-sub-pay" data-id="${item.id}">Dar como paga</button><button class="secondary v10-sub-edit" data-id="${item.id}">Editar</button><button class="danger-button v10-delete" data-type="subscriptions" data-id="${item.id}">Excluir</button></div></article>`).join('');
+        openModal(`<h2>Assinaturas e contas mensais</h2>
           <form id="v10SubscriptionForm" class="form-grid">
-            <label>Serviço<input id="v10SubName" required placeholder="Ex.: Internet, streaming"></label>
-            <label>Valor mensal<input id="v10SubValue" inputmode="decimal" required></label>
-            <label>Dia de cobrança<input id="v10SubDay" type="number" min="1" max="31" required></label>
-            <label>Categoria<input id="v10SubCategory" placeholder="Ex.: Serviços"></label>
-            <button class="primary">Adicionar assinatura</button>
-          </form><div class="v10-list">${listHtml('subscriptions')}</div>`);
-        $('v10SubscriptionForm').onsubmit = async e => { e.preventDefault(); await addItem('subscriptions',{name:$('v10SubName').value,value:numberValue($('v10SubValue').value),day:Number($('v10SubDay').value),category:$('v10SubCategory').value,active:true}); subscriptionsModal(); };
+            <label>Serviço/conta<input id="v10SubName" required placeholder="Ex.: Internet, água, aluguel" value="${esc(editing?.name || '')}"></label>
+            <label>Valor mensal<input id="v10SubValue" inputmode="decimal" required value="${editing ? esc(moneyText(editing.value).replace(/[^0-9,.-]/g,'')) : ''}"></label>
+            <label>Próxima cobrança<input id="v10SubDue" type="date" required value="${esc(editing?.dueDate || todayISO())}"></label>
+            <label>Categoria<input id="v10SubCategory" placeholder="Ex.: Serviços" value="${esc(editing?.category || '')}"></label>
+            <button class="primary">${editing ? 'Salvar alteração' : 'Adicionar assinatura'}</button>
+          </form><div class="v10-list">${rows || '<div class="empty-state">Nenhuma assinatura cadastrada.</div>'}</div>`);
+        bindV10MoneyInputs('v10SubValue');
+        $('v10SubscriptionForm').onsubmit = async e => { e.preventDefault(); const data={name:$('v10SubName').value.trim(),value:numberValue($('v10SubValue').value),dueDate:$('v10SubDue').value,day:Number($('v10SubDue').value.slice(8,10)),category:$('v10SubCategory').value.trim(),active:true,status:'pending'}; if(editing) await updateItem('subscriptions',editing.id,data); else await addItem('subscriptions',data); subscriptionsModal(); toast(editing?'Assinatura atualizada.':'Assinatura adicionada.'); };
+        document.querySelectorAll('.v10-sub-edit').forEach(btn=>btn.onclick=()=>subscriptionsModal(btn.dataset.id));
+        document.querySelectorAll('.v10-sub-pay').forEach(btn=>btn.onclick=()=>paySubscription(btn.dataset.id));
         bindDeletes(subscriptionsModal);
+      }
+      async function paySubscription(itemId) {
+        const item=(state.subscriptions||[]).find(x=>x.id===itemId); if(!item)return;
+        if(!confirm(`Confirmar pagamento de ${item.name} no valor de ${moneyText(item.value)}?`))return;
+        const paidAt=Date.now(); const oldDue=item.dueDate || todayISO(); const nextDue=nextMonthDate(oldDue,item.day || Number(oldDue.slice(8,10)) || 1);
+        const tx={id:id(),userId:uid(),type:'expense',description:item.name,value:Number(item.value||0),category:item.category||'Assinaturas',date:todayISO(),createdAt:paidAt,sourceSubscriptionId:item.id};
+        state.transactions.push(tx); item.lastPaidAt=paidAt; item.lastPaidDate=todayISO(); item.dueDate=nextDue; item.day=Number(nextDue.slice(8,10)); item.status='pending'; item.paymentCount=Number(item.paymentCount||0)+1; item.updatedAt=paidAt;
+        saveLocal('subscriptions'); if(typeof persist==='function')persist(); await cloudSet('subscriptions',item);
+        if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}
+        addAudit(`Pagou assinatura ${item.name}`,item.id); subscriptionsModal(); if(typeof render==='function')render(); toast(`Pagamento registrado. Próxima cobrança: ${brDate(nextDue)}.`);
       }
 
       function loansModal() {
@@ -216,6 +282,7 @@
             <label>Quantidade de parcelas restantes<input id="v10LoanCount" type="number" min="1" required></label>
             <button class="primary">Adicionar empréstimo</button>
           </form><div class="v10-list">${listHtml('loans')}</div>`);
+        bindV10MoneyInputs('v10LoanBalance','v10LoanInstallment');
         $('v10LoanForm').onsubmit = async e => { e.preventDefault(); await addItem('loans',{name:$('v10LoanName').value,balance:numberValue($('v10LoanBalance').value),installment:numberValue($('v10LoanInstallment').value),date:$('v10LoanDate').value,remaining:Number($('v10LoanCount').value),status:'active'}); loansModal(); };
         bindDeletes(loansModal);
       }
@@ -233,6 +300,7 @@
       function walletsModal() {
         openModal(`<h2>Carteiras e centros de controle</h2><p class="muted">Separe finanças pessoais, familiares ou empresariais.</p>
           <form id="v10WalletForm" class="form-grid"><label>Nome da carteira<input id="v10WalletName" required placeholder="Ex.: Casa, Empresa, Família"></label><label>Responsável<input id="v10WalletOwner" required></label><label>Limite mensal<input id="v10WalletLimit" inputmode="decimal" required></label><button class="primary">Criar carteira</button></form><div class="v10-list">${listHtml('wallets')}</div>`);
+        bindV10MoneyInputs('v10WalletLimit');
         $('v10WalletForm').onsubmit=async e=>{e.preventDefault();await addItem('wallets',{name:$('v10WalletName').value,owner:$('v10WalletOwner').value,value:numberValue($('v10WalletLimit').value)});walletsModal();}; bindDeletes(walletsModal);
       }
 
@@ -245,6 +313,7 @@
 
       function receiptsModal() {
         openModal(`<h2>Gerador de recibos</h2><form id="v10ReceiptForm" class="form-grid"><label>Recebido de<input id="v10ReceiptName" required></label><label>Valor<input id="v10ReceiptValue" inputmode="decimal" required></label><label>Referente a<input id="v10ReceiptDescription" required></label><label>Data<input id="v10ReceiptDate" type="date" value="${todayISO()}" required></label><button class="primary">Gerar recibo</button></form><div class="v10-list">${listHtml('receipts')}</div>`);
+        bindV10MoneyInputs('v10ReceiptValue');
         $('v10ReceiptForm').onsubmit=async e=>{e.preventDefault();const item=await addItem('receipts',{name:$('v10ReceiptName').value,value:numberValue($('v10ReceiptValue').value),description:$('v10ReceiptDescription').value,date:$('v10ReceiptDate').value});printReceipt(item);}; bindDeletes(receiptsModal);
       }
       function printReceipt(item) {
@@ -259,7 +328,32 @@
 
       function planningModal() {
         openModal(`<h2>Planejamento anual</h2><form id="v10PlanningForm" class="form-grid"><label>Objetivo<input id="v10PlanName" required></label><label>Valor desejado<input id="v10PlanValue" inputmode="decimal" required></label><label>Prazo<input id="v10PlanDate" type="date" required></label><label>Prioridade<select id="v10PlanPriority"><option>Alta</option><option>Média</option><option>Baixa</option></select></label><button class="primary">Adicionar objetivo</button></form><div class="v10-list">${listHtml('planning')}</div>`);
+        bindV10MoneyInputs('v10PlanValue');
         $('v10PlanningForm').onsubmit=async e=>{e.preventDefault();await addItem('planning',{name:$('v10PlanName').value,value:numberValue($('v10PlanValue').value),date:$('v10PlanDate').value,priority:$('v10PlanPriority').value,status:'planejado'});planningModal();}; bindDeletes(planningModal);
+      }
+
+      function monthlyClientsModal(editId = null) {
+        const editing=editId?(state.monthlyClients||[]).find(x=>x.id===editId):null;
+        const clients=mine(state.monthlyClients);
+        openModal(`<h2>Clientes com acerto mensal</h2><p class="muted">Cadastre clientes que usam o serviço durante o mês e pagam tudo de uma vez no fechamento.</p>
+          <form id="monthlyClientForm" class="form-grid"><label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label><label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label><label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label><button class="primary">${editing?'Salvar cliente':'Adicionar cliente mensal'}</button></form>
+          <div class="v10-list">${clients.length?clients.map(c=>{const total=(c.entries||[]).reduce((sum,e)=>sum+Number(e.value||0),0);return `<article class="v10-row"><div><b>${esc(c.name)}</b><small>${(c.entries||[]).length} lançamento(s) • Total aberto ${moneyText(total)} • fecha dia ${c.closingDay||30}</small></div><div class="v10-row-actions"><button class="primary monthly-open" data-id="${c.id}">Abrir</button><button class="secondary monthly-edit" data-id="${c.id}">Editar</button><button class="danger-button monthly-delete" data-id="${c.id}">Excluir</button></div></article>`}).join(''):'<div class="empty-state">Nenhum cliente mensal cadastrado.</div>'}</div>`);
+        $('monthlyClientForm').onsubmit=async e=>{e.preventDefault();const data={name:$('monthlyClientName').value.trim(),closingDay:Number($('monthlyClientDay').value),category:$('monthlyClientCategory').value.trim()||'Serviços',entries:editing?.entries||[],settlements:editing?.settlements||[],status:'active'};if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);monthlyClientsModal();toast('Cliente mensal salvo.');};
+        document.querySelectorAll('.monthly-open').forEach(b=>b.onclick=()=>monthlyClientDetails(b.dataset.id));
+        document.querySelectorAll('.monthly-edit').forEach(b=>b.onclick=()=>monthlyClientsModal(b.dataset.id));
+        document.querySelectorAll('.monthly-delete').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este cliente mensal e seus lançamentos abertos?'))return;await deleteItem('monthlyClients',b.dataset.id);monthlyClientsModal();});
+      }
+      function monthlyClientDetails(clientId) {
+        const client=(state.monthlyClients||[]).find(x=>x.id===clientId);if(!client)return;const entries=client.entries||[];const total=entries.reduce((s,e)=>s+Number(e.value||0),0);
+        openModal(`<h2>${esc(client.name)}</h2><div class="summary-grid"><article class="summary"><span>Lançamentos abertos</span><strong>${entries.length}</strong></article><article class="summary"><span>Total a receber</span><strong>${moneyText(total)}</strong></article></div>
+          <form id="monthlyEntryForm" class="form-grid"><label>Descrição<input id="monthlyEntryDescription" required placeholder="Ex.: Serviço da semana"></label><label>Valor<input id="monthlyEntryValue" inputmode="decimal" required></label><label>Data<input id="monthlyEntryDate" type="date" value="${todayISO()}" required></label><button class="primary">Adicionar ao mês</button></form>
+          <div class="v10-list">${entries.length?entries.map(e=>`<article class="v10-row"><div><b>${esc(e.description)}</b><small>${brDate(e.date)} • ${moneyText(e.value)}</small></div><button class="danger-button monthly-entry-delete" data-id="${e.id}">Excluir</button></article>`).join(''):'<div class="empty-state">Nenhum serviço lançado neste mês.</div>'}</div>
+          <div class="modal-actions"><button id="monthlyReceiveAll" class="primary" ${total<=0?'disabled':''}>Receber total ${moneyText(total)}</button><button id="monthlyBack" class="secondary">Voltar</button></div>`);
+        bindV10MoneyInputs('monthlyEntryValue');
+        $('monthlyEntryForm').onsubmit=async e=>{e.preventDefault();client.entries=client.entries||[];client.entries.push({id:id(),description:$('monthlyEntryDescription').value.trim(),value:numberValue($('monthlyEntryValue').value),date:$('monthlyEntryDate').value,createdAt:Date.now()});await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);toast('Valor adicionado ao acerto mensal.');};
+        document.querySelectorAll('.monthly-entry-delete').forEach(b=>b.onclick=async()=>{client.entries=(client.entries||[]).filter(e=>e.id!==b.dataset.id);await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);});
+        $('monthlyBack').onclick=()=>monthlyClientsModal();
+        $('monthlyReceiveAll').onclick=async()=>{if(total<=0)return;if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;const now=Date.now();const tx={id:id(),userId:uid(),type:'income',description:`Acerto mensal - ${client.name}`,value:total,category:client.category||'Serviços',date:todayISO(),createdAt:now,sourceMonthlyClientId:client.id,itemsCount:entries.length};state.transactions.push(tx);client.settlements=client.settlements||[];client.settlements.unshift({id:id(),value:total,date:todayISO(),createdAt:now,entries:[...entries]});client.entries=[];client.lastReceivedAt=now;client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);await updateItem('monthlyClients',client.id,{entries:client.entries,settlements:client.settlements,lastReceivedAt:now,nextClosingDate:client.nextClosingDate});if(typeof persist==='function')persist();if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}monthlyClientDetails(client.id);if(typeof render==='function')render();toast('Acerto recebido, salvo nas receitas e lançamentos abertos limpos.');};
       }
 
       function auditModal() {
