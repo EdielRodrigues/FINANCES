@@ -1,10 +1,10 @@
-FINANCE IA PRO v4.2
+FINANCE IA PRO v8.0
 
-Firebase e backend já configurados em config.js.
-Cadastro: nome, CPF, telefone, e-mail, senha, confirmação e termos.
-Após o cadastro, o sistema gera Pix mensal de R$ 24,90.
+Frontend: publique a pasta finance-ia-pro.
+Backend: publique a pasta backend-render-v8.0 no Render.
 
-Backend utilizado:
-https://personal-trainer-pix-backend-5.onrender.com
+Verificação do backend:
+https://finance-ia-pro-pix-backend.onrender.com/health
+Deve mostrar version 5.0.0 e deleteRoutes true.
 
-Publique esta pasta no GitHub Pages. Para evitar versão antiga, remova os arquivos antigos antes de enviar os novos.
+A v8.0 mantém todos os recursos anteriores e unifica a exclusão completa do usuário e do administrador, incluindo Authentication, CPF, índices, pagamentos e dados financeiros.

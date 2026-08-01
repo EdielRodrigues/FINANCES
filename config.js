@@ -1,5 +1,5 @@
 window.FINANCE_IA_CONFIG = {
-  backendUrl: "https://finance-ia-pro-pix-backend.onrender.com",
+  backendUrl: "https://personal-trainer-pix-backend-6.onrender.com",
   ownerEmails: ["diel_zi_nho25@hotmail.com"],
   firebase: {
     apiKey: "AIzaSyCJYGxyNmcolcJZZZ4wGX9OiTKro2u-YII",

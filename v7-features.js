@@ -273,3 +273,39 @@
   addDashboardBlocks();
   dashboardV7();
 })();
+
+
+/* Finance IA Pro v8.1 — atalhos avançados e ferramentas profissionais */
+(() => {
+  const advancedButtons = [
+    ['budgetAdvancedBtn','◫','Orçamento'],['recurringAdvancedBtn','↻','Recorrentes'],
+    ['investmentsAdvancedBtn','↗','Investimentos'],['debtsAdvancedBtn','▤','Dívidas'],
+    ['assetsAdvancedBtn','◆','Patrimônio'],['alertsAdvancedBtn','⚠','Alertas'],
+    ['simulatorAdvancedBtn','∑','Simulador'],['exportAdvancedBtn','⇩','Exportar']
+  ];
+  const readList=(key)=>{try{return JSON.parse(localStorage.getItem(key)||'[]')}catch{return []}};
+  state.budgets=readList('fia_budgets');state.recurring=readList('fia_recurring');state.investments=readList('fia_investments');state.debts=readList('fia_debts');state.assets=readList('fia_assets');
+  const save=()=>{for(const k of ['budgets','recurring','investments','debts','assets'])localStorage.setItem('fia_'+k,JSON.stringify(state[k]||[]))};
+  const mine=list=>(list||[]).filter(x=>x.userId===state.user?.id);
+  function install(){
+    const quick=document.querySelector('.quick-actions');if(!quick||document.getElementById('budgetAdvancedBtn'))return;
+    quick.insertAdjacentHTML('beforeend',advancedButtons.map(([id,ic,label])=>`<button id="${id}"><span>${ic}</span>${label}</button>`).join(''));
+    const on=(id,fn)=>{const e=document.getElementById(id);if(e)e.onclick=fn};
+    on('budgetAdvancedBtn',budgetModal);on('recurringAdvancedBtn',recurringModal);on('investmentsAdvancedBtn',investmentsModal);on('debtsAdvancedBtn',debtsModal);on('assetsAdvancedBtn',assetsModal);on('alertsAdvancedBtn',alertsModal);on('simulatorAdvancedBtn',simulatorModal);on('exportAdvancedBtn',exportModal);
+  }
+  function genericModal(title,type,fields){
+    const list=mine(state[type]);
+    openModal(`<h2>${title}</h2><form id="advancedGenericForm" class="form-grid">${fields.map(f=>`<label>${f.label}<input id="adv_${f.key}" ${f.type?`type="${f.type}"`:''} ${f.step?`step="${f.step}"`:''} required></label>`).join('')}<button class="primary">Adicionar</button></form><div class="advanced-list">${list.length?list.map(x=>`<article class="advanced-row"><div><b>${escapeHtml(x.name||x.description||x.category||'Registro')}</b><small>${x.value!=null?money(x.value):''}${x.date?' • '+new Date(x.date+'T12:00:00').toLocaleDateString('pt-BR'):''}</small></div><button class="danger-button advanced-remove" data-id="${x.id}" data-type="${type}">Excluir</button></article>`).join(''):'<div class="empty-state">Nenhum registro.</div>'}</div>`);
+    $('advancedGenericForm').onsubmit=async e=>{e.preventDefault();const item={id:crypto.randomUUID(),userId:state.user.id,createdAt:Date.now()};for(const f of fields){let v=$('adv_'+f.key).value;if(f.type==='number')v=parseBRMoney(v);item[f.key]=v}state[type].push(item);save();if(cloudReady){const{id,userId,...data}=item;await cloudDb.ref(`finance/${state.user.id}/${type}/${id}`).set(data)}genericModal(title,type,fields);toast('Registro salvo.')};
+    document.querySelectorAll('.advanced-remove').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este registro?'))return;state[type]=state[type].filter(x=>x.id!==b.dataset.id);save();if(cloudReady)await cloudDb.ref(`finance/${state.user.id}/${type}/${b.dataset.id}`).remove();genericModal(title,type,fields)});
+  }
+  const budgetModal=()=>genericModal('Orçamento por categoria','budgets',[{key:'category',label:'Categoria'},{key:'value',label:'Limite mensal',type:'number',step:'0.01'}]);
+  const recurringModal=()=>genericModal('Lançamentos recorrentes','recurring',[{key:'description',label:'Descrição'},{key:'value',label:'Valor',type:'number',step:'0.01'},{key:'date',label:'Próxima data',type:'date'}]);
+  const investmentsModal=()=>genericModal('Investimentos','investments',[{key:'name',label:'Investimento'},{key:'value',label:'Valor atual',type:'number',step:'0.01'}]);
+  const debtsModal=()=>genericModal('Dívidas e empréstimos','debts',[{key:'name',label:'Descrição'},{key:'value',label:'Saldo devedor',type:'number',step:'0.01'},{key:'date',label:'Próximo vencimento',type:'date'}]);
+  const assetsModal=()=>genericModal('Bens e patrimônio','assets',[{key:'name',label:'Bem ou conta'},{key:'value',label:'Valor estimado',type:'number',step:'0.01'}]);
+  function alertsModal(){const bills=(state.bills||[]).filter(x=>x.userId===state.user.id&&x.status!=='paid'&&x.status!=='received').sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));openModal(`<h2>Central de alertas</h2><div class="advanced-list">${bills.length?bills.map(x=>`<article class="advanced-row"><div><b>${escapeHtml(x.description)}</b><small>${new Date(x.dueDate+'T12:00:00').toLocaleDateString('pt-BR')} • ${money(x.value)}</small></div><span class="payment-status">${escapeHtml(x.status||'pending')}</span></article>`).join(''):'<div class="empty-state">Nenhum alerta financeiro.</div>'}</div>`)}
+  function simulatorModal(){openModal(`<h2>Simulador de meta</h2><form id="goalSimulator" class="form-grid"><label>Valor da meta<input id="simTarget" inputmode="decimal" required></label><label>Valor já guardado<input id="simCurrent" inputmode="decimal" value="0,00" required></label><label>Quanto pode guardar por mês<input id="simMonthly" inputmode="decimal" required></label><button class="primary">Calcular</button></form><div id="simResult"></div>`);$('goalSimulator').onsubmit=e=>{e.preventDefault();const target=parseBRMoney($('simTarget').value),current=parseBRMoney($('simCurrent').value),monthly=parseBRMoney($('simMonthly').value);if(monthly<=0)return toast('Informe um valor mensal maior que zero.');const months=Math.max(0,Math.ceil((target-current)/monthly));$('simResult').innerHTML=`<div class="ai-box"><b>Previsão</b><p>Você alcançará ${money(target)} em aproximadamente <strong>${months} mês(es)</strong>.</p></div>`}}
+  function exportModal(){openModal(`<h2>Exportação avançada</h2><div class="profile-list"><button id="exportAllFinance" class="profile-option"><span>⇩</span><div><b>Exportar todos os dados</b><small>JSON completo da conta</small></div><i>›</i></button><button id="printFinanceReport" class="profile-option"><span>▥</span><div><b>Relatório para PDF</b><small>Abre a impressão do navegador</small></div><i>›</i></button></div>`);$('exportAllFinance').onclick=()=>{const data={exportedAt:new Date().toISOString(),transactions:userTx(),goals:userGoals(),bills:mine(state.bills),cards:mine(state.cards),installments:mine(state.installments),budgets:mine(state.budgets),recurring:mine(state.recurring),investments:mine(state.investments),debts:mine(state.debts),assets:mine(state.assets)};downloadText('finance-ia-pro-dados-'+todayISO()+'.json',JSON.stringify(data,null,2),'application/json')};$('printFinanceReport').onclick=()=>window.print()}
+  const observer=new MutationObserver(install);observer.observe(document.documentElement,{childList:true,subtree:true});setTimeout(install,100);
+})();
