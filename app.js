@@ -11,6 +11,8 @@ const BACKEND_URL = String(CLOUD_CONFIG.backendUrl || '').replace(/\/$/, '');
 const OWNER_EMAILS = (CLOUD_CONFIG.ownerEmails || []).map(x=>String(x).trim().toLowerCase());
 let cloudAuth=null, cloudDb=null, cloudReady=false, cloudUnsubs=[];
 let paymentMonitorTimer=null, paymentMonitorBusy=false, lastAccessUnlockedAt=0;
+let notificationsInitialized=false;
+let knownNotificationIds=new Set();
 
 function initCloud(){
   if(!CLOUD_ENABLED) return false;
@@ -56,6 +58,20 @@ function subscribeCloudData(uid){
   });
   bind(`users/${uid}`,v=>{if(!v||!state.user)return; const wasLocked=accessExpired(); state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=accessPlan(v); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render(); if(wasLocked&&subscriptionActive()) unlockAfterApprovedPayment();});
   bind('settings/financeIa',v=>{state.settings={...state.settings,...v,premiumPrice:24.90}; localStorage.setItem('fia_settings',JSON.stringify(state.settings));});
+  bind(`userNotifications/${uid}`,v=>{
+    const incoming=Object.entries(v||{}).map(([id,x])=>({id,userId:uid,read:false,...x}));
+    const legacy=(state.notifications||[]).filter(n=>n.target==='all'||n.target==='free'||n.target==='premium');
+    const fresh=incoming.filter(n=>!n.read&&!knownNotificationIds.has(n.id));
+    state.notifications=[...legacy,...incoming];
+    localStorage.setItem('fia_notifications',JSON.stringify(state.notifications));
+    renderAdminNotifications();
+    if(notificationsInitialized){
+      fresh.forEach(n=>showSystemNotification(n));
+      if(fresh.length) toast(fresh.length===1?'Você recebeu uma nova notificação.':`Você recebeu ${fresh.length} novas notificações.`);
+    }
+    knownNotificationIds=new Set(incoming.map(n=>n.id));
+    notificationsInitialized=true;
+  });
   if(isOwner()){
     bind('users',v=>{state.users=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_users',JSON.stringify(state.users));});
     bind('payments',v=>{state.payments=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_payments',JSON.stringify(state.payments));});
@@ -424,16 +440,70 @@ function aiModal(){
   $('aiForm').onsubmit=e=>{e.preventDefault();const q=$('aiQuestion').value.toLowerCase();let ans='Comece separando seus gastos em essenciais, importantes e adiáveis. Defina um teto semanal e acompanhe diariamente.';if(q.includes('econom'))ans=`Com base nos dados atuais, tente guardar pelo menos ${money(fromCents(Math.max(0,Math.round(toCents(income)*0.1))))} por mês e reduza primeiro a categoria ${top?.[0]||'de maior gasto'}.`;if(q.includes('gastei')||q.includes('gastando'))ans=`Suas despesas registradas somam ${money(expense)}.${top?` O maior gasto está em ${top[0]} (${money(top[1])}).`:''}`;if(q.includes('saldo'))ans=`Seu saldo calculado é ${money(income-expense)}.`;$('aiAnswer').innerHTML=`<div class="ai-box" style="margin-top:12px"><b>Resposta da IA</b><p>${ans}</p></div>`}
 }
 
-function renderAdminNotifications(){
+function notificationTimestamp(n){
+  const value=n?.createdAt||n?.timestamp||0;
+  const time=typeof value==='number'?value:new Date(value).getTime();
+  return Number.isFinite(time)?time:0;
+}
+function userNotificationList(){
   const target=state.plan==='premium'?'premium':'free';
-  const list=state.notifications.filter(n=>n.target==='all'||n.target===target);
+  return (state.notifications||[])
+    .filter(n=>n.userId===state.user?.id||n.target==='all'||n.target===target)
+    .sort((a,b)=>notificationTimestamp(b)-notificationTimestamp(a));
+}
+function renderAdminNotifications(){
+  const list=userNotificationList();
+  const unread=list.filter(n=>!n.read);
   const count=$('notificationCount');
-  if(count){count.textContent=list.length;count.classList.toggle('hidden',!list.length)}
+  if(count){count.textContent=unread.length>99?'99+':String(unread.length);count.classList.toggle('hidden',!unread.length)}
+  const btn=$('notificationBtn');
+  if(btn)btn.classList.toggle('has-unread',Boolean(unread.length));
+}
+function showSystemNotification(n){
+  if(!('Notification' in window)||Notification.permission!=='granted')return;
+  try{
+    const notice=new Notification(n.title||'Finance IA Pro',{body:n.message||'Você recebeu uma nova mensagem.',icon:'icon-192.png',badge:'icon-192.png',tag:`finance-ia-${n.id||notificationTimestamp(n)}`,renotify:true});
+    notice.onclick=()=>{window.focus();notificationsModal();notice.close()};
+  }catch(e){console.warn('Notificação do sistema:',e)}
+}
+async function requestNotificationPermission(){
+  if(!('Notification' in window))return toast('Este aparelho não oferece notificações do navegador.');
+  const permission=await Notification.requestPermission();
+  toast(permission==='granted'?'Notificações ativadas neste aparelho.':'Permissão de notificação não concedida.');
+  notificationsModal();
+}
+async function markNotificationRead(n){
+  n.read=true;n.readAt=new Date().toISOString();
+  localStorage.setItem('fia_notifications',JSON.stringify(state.notifications));
+  renderAdminNotifications();
+  if(cloudReady&&n.userId===state.user?.id&&n.id)await cloudDb.ref(`userNotifications/${state.user.id}/${n.id}`).update({read:true,readAt:n.readAt});
+}
+async function markAllNotificationsRead(){
+  const list=userNotificationList().filter(n=>!n.read);
+  const updates={};const now=new Date().toISOString();
+  list.forEach(n=>{n.read=true;n.readAt=now;if(n.userId===state.user?.id&&n.id)updates[`userNotifications/${state.user.id}/${n.id}/read`]=true,updates[`userNotifications/${state.user.id}/${n.id}/readAt`]=now});
+  localStorage.setItem('fia_notifications',JSON.stringify(state.notifications));
+  if(cloudReady&&Object.keys(updates).length)await cloudDb.ref().update(updates);
+  renderAdminNotifications();notificationsModal();toast('Notificações marcadas como lidas.');
+}
+async function deleteReadNotifications(){
+  if(!confirm('Excluir todas as notificações já lidas?'))return;
+  const read=userNotificationList().filter(n=>n.read);
+  const updates={};
+  read.forEach(n=>{if(n.userId===state.user?.id&&n.id)updates[`userNotifications/${state.user.id}/${n.id}`]=null});
+  state.notifications=(state.notifications||[]).filter(n=>!read.includes(n));
+  localStorage.setItem('fia_notifications',JSON.stringify(state.notifications));
+  if(cloudReady&&Object.keys(updates).length)await cloudDb.ref().update(updates);
+  renderAdminNotifications();notificationsModal();toast('Notificações lidas excluídas.');
 }
 function notificationsModal(){
-  const target=state.plan==='premium'?'premium':'free';
-  const list=state.notifications.filter(n=>n.target==='all'||n.target===target).sort((a,b)=>b.createdAt-a.createdAt);
-  openModal(`<h2>Notificações</h2>${list.length?list.map(n=>`<div class="ai-box" style="margin-top:10px"><b>${escapeHtml(n.title)}</b><p>${escapeHtml(n.message)}</p><small>${new Date(n.createdAt).toLocaleString('pt-BR')}</small></div>`).join(''):'<div class="empty-state">Nenhuma notificação.</div>'}`)
+  const list=userNotificationList();
+  const permission=('Notification' in window)?Notification.permission:'unsupported';
+  openModal(`<h2>Central de notificações</h2><div class="notification-toolbar"><button id="enableDeviceNotifications" class="secondary">${permission==='granted'?'Notificações do aparelho ativas':'Ativar notificações no aparelho'}</button><button id="markAllNotificationsRead" class="secondary">Marcar todas como lidas</button><button id="deleteReadNotifications" class="danger-outline">Excluir lidas</button></div><div class="notification-list">${list.length?list.map(n=>`<article class="notification-item ${n.read?'':'unread'}" data-notification-id="${escapeHtml(n.id||'')}"><div><b>${escapeHtml(n.title||'Aviso')}</b>${n.read?'':'<span class="unread-dot">Nova</span>'}<p>${escapeHtml(n.message||'')}</p><small>${new Date(notificationTimestamp(n)).toLocaleString('pt-BR')}</small></div></article>`).join(''):'<div class="empty-state">Nenhuma notificação.</div>'}</div>`);
+  $('enableDeviceNotifications').onclick=requestNotificationPermission;
+  $('markAllNotificationsRead').onclick=markAllNotificationsRead;
+  $('deleteReadNotifications').onclick=deleteReadNotifications;
+  document.querySelectorAll('[data-notification-id]').forEach(el=>el.onclick=async()=>{const n=list.find(x=>String(x.id)===String(el.dataset.notificationId));if(n&&!n.read){await markNotificationRead(n);el.classList.remove('unread');el.querySelector('.unread-dot')?.remove();}});
 }
 
 function isOwner(){
@@ -766,7 +836,7 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.getRegistrations().then(list=>list.forEach(r=>r.unregister()));
     caches?.keys?.().then(keys=>keys.forEach(k=>caches.delete(k)));
   }else{
-    navigator.serviceWorker.register('service-worker.js?v=10.0.3',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+    navigator.serviceWorker.register('service-worker.js?v=10.0.6',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
   }
 }
 setInterval(()=>{if(state.user&&!isOwner()){state.plan=accessPlan();if(!subscriptionActive())checkSubscriptionAccess();else render();}},60000);
