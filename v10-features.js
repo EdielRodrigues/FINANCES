@@ -332,11 +332,57 @@
           <div class="v10-list">${monthlyRows||'<div class="empty-state">Nenhum acerto mensal em aberto.</div>'}</div>`);
       }
 
-      function walletsModal() {
-        openModal(`<h2>Carteiras e centros de controle</h2><p class="muted">Separe finanças pessoais, familiares ou empresariais.</p>
-          <form id="v10WalletForm" class="form-grid"><label>Nome da carteira<input id="v10WalletName" required placeholder="Ex.: Casa, Empresa, Família"></label><label>Responsável<input id="v10WalletOwner" required></label><label>Limite mensal<input id="v10WalletLimit" inputmode="decimal" required></label><button class="primary">Criar carteira</button></form><div class="v10-list">${listHtml('wallets')}</div>`);
-        bindV10MoneyInputs('v10WalletLimit');
-        $('v10WalletForm').onsubmit=async e=>{e.preventDefault();await addItem('wallets',{name:$('v10WalletName').value,owner:$('v10WalletOwner').value,value:numberValue($('v10WalletLimit').value)});walletsModal();}; bindDeletes(walletsModal);
+      async function familyWalletList() {
+        if (!cloudReady || !BACKEND_URL || !cloudAuth?.currentUser) return [];
+        try { const r=await apiFetch('/familyWallet/list'); return Array.isArray(r.wallets)?r.wallets:[]; }
+        catch(e){ console.warn('Carteiras compartilhadas:',e.message); return []; }
+      }
+
+      function familyWalletCard(w) {
+        const members=Object.values(w.members||{});
+        const total=Object.values(w.entries||{}).reduce((sum,e)=>sum+(e.kind==='expense'?-Number(e.value||0):Number(e.value||0)),0);
+        return `<article class="family-wallet-card">
+          <div class="family-wallet-head"><div><span class="family-wallet-badge">👨‍👩‍👧 Compartilhada</span><h3>${esc(w.name||'Família')}</h3><small>${members.length} membro(s) • código ${esc(w.inviteCode||'—')}</small></div><strong>${moneyText(total)}</strong></div>
+          <div class="family-wallet-members">${members.slice(0,5).map(m=>`<span title="${esc(m.email||'')}">${esc((m.name||m.email||'U').slice(0,1).toUpperCase())}</span>`).join('')}${members.length>5?`<i>+${members.length-5}</i>`:''}</div>
+          <div class="family-wallet-actions"><button class="primary family-open" data-id="${esc(w.id)}">Abrir compartilhada</button><button class="secondary family-copy" data-code="${esc(w.inviteCode||'')}">Copiar código</button></div>
+        </article>`;
+      }
+
+      async function walletsModal() {
+        const shared=await familyWalletList();
+        const personal=mine(state.wallets);
+        openModal(`<div class="wallets-advanced-head"><div><h2>Carteiras e centros de controle</h2><p class="muted">Organize finanças pessoais, empresariais e compartilhe uma carteira com toda a família em tempo real.</p></div></div>
+          <div class="v10-metrics wallet-metrics"><article><span>Minhas carteiras</span><strong>${personal.length}</strong></article><article><span>Compartilhadas</span><strong>${shared.length}</strong></article><article><span>Limites pessoais</span><strong>${moneyText(personal.reduce((s,x)=>s+Number(x.value||0),0))}</strong></article></div>
+          <div class="wallet-tabs"><button id="walletTabPersonal" class="secondary">＋ Carteira pessoal</button><button id="walletTabFamily" class="primary">👨‍👩‍👧 Criar família</button><button id="walletJoinBtn" class="secondary">🔗 Entrar com código</button></div>
+          <section id="walletCreateBox" class="wallet-create-box hidden"></section>
+          <label class="wallet-search">Pesquisar carteira<input id="walletSearch" placeholder="Nome, responsável ou código"></label>
+          <h3>Carteiras compartilhadas</h3><div id="familyWalletList" class="family-wallet-grid">${shared.length?shared.map(familyWalletCard).join(''):'<div class="empty-state">Nenhuma carteira familiar compartilhada ainda.</div>'}</div>
+          <h3>Carteiras pessoais</h3><div id="personalWalletList" class="v10-list">${listHtml('wallets')}</div>`);
+
+        const showPersonal=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="v10WalletForm" class="form-grid"><label>Nome da carteira<input id="v10WalletName" required placeholder="Ex.: Casa, Empresa"></label><label>Responsável<input id="v10WalletOwner" required value="${esc(state.user?.name||'')}"></label><label>Limite mensal<input id="v10WalletLimit" inputmode="decimal" required placeholder="0,00"></label><button class="primary">Criar carteira pessoal</button></form>`; bindV10MoneyInputs('v10WalletLimit'); $('v10WalletForm').onsubmit=async e=>{e.preventDefault();await addItem('wallets',{name:$('v10WalletName').value.trim(),owner:$('v10WalletOwner').value.trim(),value:numberValue($('v10WalletLimit').value),scope:'personal'});walletsModal();}; };
+        const showFamily=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="familyWalletForm" class="form-grid"><label>Nome da família/carteira<input id="familyWalletName" required placeholder="Ex.: Família Rodrigues"></label><label>Limite mensal compartilhado<input id="familyWalletLimit" inputmode="decimal" required placeholder="0,00"></label><p class="muted">Ao criar, será gerado um código. Cada familiar entra com sua própria conta do Finance IA Pro e usa o código para visualizar a mesma carteira.</p><button class="primary">Criar e gerar código</button></form>`; bindV10MoneyInputs('familyWalletLimit'); $('familyWalletForm').onsubmit=async e=>{e.preventDefault();try{const r=await apiFetch('/familyWallet/create',{method:'POST',body:JSON.stringify({name:$('familyWalletName').value.trim(),monthlyLimit:numberValue($('familyWalletLimit').value)})});toast(`Carteira criada. Código: ${r.inviteCode}`);walletsModal();}catch(err){toast(err.message)}}; };
+        $('walletTabPersonal').onclick=showPersonal; $('walletTabFamily').onclick=showFamily;
+        $('walletJoinBtn').onclick=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="familyJoinForm" class="form-grid"><label>Código compartilhado<input id="familyJoinCode" required maxlength="12" placeholder="Ex.: FAM8K2P4"></label><button class="primary">Entrar na carteira da família</button></form>`; $('familyJoinForm').onsubmit=async e=>{e.preventDefault();try{await apiFetch('/familyWallet/join',{method:'POST',body:JSON.stringify({code:$('familyJoinCode').value.trim().toUpperCase()})});toast('Você entrou na carteira compartilhada.');walletsModal();}catch(err){toast(err.message)}}; };
+        $('walletSearch').oninput=e=>{const q=e.target.value.trim().toLowerCase();document.querySelectorAll('.family-wallet-card,.v10-row').forEach(card=>card.style.display=card.textContent.toLowerCase().includes(q)?'':'none')};
+        document.querySelectorAll('.family-copy').forEach(b=>b.onclick=async()=>{try{await navigator.clipboard.writeText(b.dataset.code);toast('Código copiado.')}catch{toast(`Código: ${b.dataset.code}`)}});
+        document.querySelectorAll('.family-open').forEach(b=>b.onclick=()=>familyWalletDetail(b.dataset.id));
+        bindDeletes(walletsModal);
+      }
+
+      async function familyWalletDetail(walletId) {
+        let wallet; try{wallet=(await apiFetch(`/familyWallet/get?id=${encodeURIComponent(walletId)}`)).wallet;}catch(e){return toast(e.message)}
+        if(!wallet)return;
+        const entries=Object.entries(wallet.entries||{}).map(([entryId,x])=>({entryId,...x})).sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+        const income=entries.filter(x=>x.kind==='income').reduce((s,x)=>s+Number(x.value||0),0), expense=entries.filter(x=>x.kind==='expense').reduce((s,x)=>s+Number(x.value||0),0);
+        const members=Object.values(wallet.members||{});
+        openModal(`<h2>👨‍👩‍👧 ${esc(wallet.name)}</h2><p class="muted">Tudo que qualquer membro adicionar aqui aparece para a família inteira.</p>
+          <div class="v10-metrics"><article><span>Saldo compartilhado</span><strong>${moneyText(income-expense)}</strong></article><article><span>Receitas</span><strong>${moneyText(income)}</strong></article><article><span>Despesas</span><strong>${moneyText(expense)}</strong></article><article><span>Membros</span><strong>${members.length}</strong></article></div>
+          <div class="family-invite-box"><div><small>Código para compartilhar</small><b>${esc(wallet.inviteCode||'—')}</b></div><button id="familyDetailCopy" class="secondary">Copiar</button></div>
+          <form id="familyEntryForm" class="form-grid family-entry-form"><label>Tipo<select id="familyEntryKind"><option value="expense">Despesa</option><option value="income">Receita</option></select></label><label>Descrição<input id="familyEntryDesc" required placeholder="Ex.: Mercado"></label><label>Valor<input id="familyEntryValue" required inputmode="decimal" placeholder="0,00"></label><button class="primary">Adicionar para toda família</button></form>
+          <h3>Membros</h3><div class="family-member-list">${members.map(m=>`<div><span>${esc(m.name||'Usuário')}</span><small>${esc(m.email||'')}</small></div>`).join('')}</div>
+          <h3>Movimentações compartilhadas</h3><div class="v10-list">${entries.length?entries.map(x=>`<article class="v10-row"><div><b>${esc(x.description||'Lançamento')}</b><small>${esc(x.memberName||'Família')} • ${new Date(x.createdAt||Date.now()).toLocaleDateString('pt-BR')}</small></div><strong class="${x.kind==='income'?'safe-text':'danger-text'}">${x.kind==='income'?'+':'−'} ${moneyText(x.value)}</strong></article>`).join(''):'<div class="empty-state">Nenhuma movimentação compartilhada.</div>'}</div>`);
+        bindV10MoneyInputs('familyEntryValue'); $('familyDetailCopy').onclick=async()=>{try{await navigator.clipboard.writeText(wallet.inviteCode);toast('Código copiado.')}catch{toast(wallet.inviteCode)}};
+        $('familyEntryForm').onsubmit=async e=>{e.preventDefault();try{await apiFetch('/familyWallet/addEntry',{method:'POST',body:JSON.stringify({walletId,kind:$('familyEntryKind').value,description:$('familyEntryDesc').value.trim(),value:numberValue($('familyEntryValue').value)})});toast('Movimentação sincronizada com a família.');familyWalletDetail(walletId);}catch(err){toast(err.message)}};
       }
 
       function contactModal(type,title) {
@@ -346,14 +392,171 @@
       const clientsModal=()=>contactModal('clients','Clientes');
       const suppliersModal=()=>contactModal('suppliers','Fornecedores');
 
-      function receiptsModal() {
-        openModal(`<h2>Gerador de recibos</h2><form id="v10ReceiptForm" class="form-grid"><label>Recebido de<input id="v10ReceiptName" required></label><label>Valor<input id="v10ReceiptValue" inputmode="decimal" required></label><label>Referente a<input id="v10ReceiptDescription" required></label><label>Data<input id="v10ReceiptDate" type="date" value="${todayISO()}" required></label><button class="primary">Gerar recibo</button></form><div class="v10-list">${listHtml('receipts')}</div>`);
-        bindV10MoneyInputs('v10ReceiptValue');
-        $('v10ReceiptForm').onsubmit=async e=>{e.preventDefault();const item=await addItem('receipts',{name:$('v10ReceiptName').value,value:numberValue($('v10ReceiptValue').value),description:$('v10ReceiptDescription').value,date:$('v10ReceiptDate').value});printReceipt(item);}; bindDeletes(receiptsModal);
+      function receiptCode(item) {
+        if (item?.number) return item.number;
+        const date = String(item?.date || todayISO()).replace(/-/g,'');
+        return `REC-${date}-${String(item?.id || '').replace(/[^a-z0-9]/gi,'').slice(-5).toUpperCase() || '00000'}`;
       }
-      function printReceipt(item) {
-        const win=window.open('','_blank'); if(!win)return toast('Permita pop-ups para imprimir o recibo.');
-        win.document.write(`<html><head><title>Recibo</title><style>body{font-family:Arial;padding:40px;line-height:1.6}h1{text-align:center}.value{font-size:28px;font-weight:bold}</style></head><body><h1>RECIBO</h1><p class="value">${moneyText(item.value)}</p><p>Recebi de <b>${esc(item.name)}</b> a importância acima, referente a <b>${esc(item.description)}</b>.</p><p>Data: ${brDate(item.date)}</p><br><br><hr><p style="text-align:center">Assinatura</p><script>window.print()</script></body></html>`);win.document.close();
+
+      function receiptSearchMatch(item, query, filter) {
+        const text=[item.name,item.description,item.document,item.phone,item.paymentMethod,item.notes,receiptCode(item)]
+          .map(v=>String(v||'').toLowerCase()).join(' ');
+        if(query && !text.includes(query)) return false;
+        if(filter==='month') return String(item.date||'').slice(0,7)===todayISO().slice(0,7);
+        if(filter==='today') return String(item.date||'')===todayISO();
+        return true;
+      }
+
+      function receiptsModal(editId = null) {
+        const editing=editId?(state.receipts||[]).find(x=>x.id===editId):null;
+        const query=String(window.__fiaReceiptSearch||'').trim().toLowerCase();
+        const filter=String(window.__fiaReceiptFilter||'all');
+        const mineReceipts=mine(state.receipts).filter(x=>receiptSearchMatch(x,query,filter))
+          .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || Number(b.createdAt||0)-Number(a.createdAt||0));
+        const total=mineReceipts.reduce((sum,x)=>sum+Number(x.value||0),0);
+        const allMine=mine(state.receipts);
+        const monthTotal=allMine.filter(x=>String(x.date||'').slice(0,7)===todayISO().slice(0,7)).reduce((sum,x)=>sum+Number(x.value||0),0);
+        const formTitle=editing?'Editar recibo':'Novo recibo';
+        const rows=mineReceipts.length?mineReceipts.map(item=>`
+          <article class="receipt-card">
+            <div class="receipt-card-head">
+              <div><b>${esc(item.name||'Sem nome')}</b><small>${esc(receiptCode(item))}</small></div>
+              <strong>${moneyText(item.value)}</strong>
+            </div>
+            <div class="receipt-card-meta">
+              <span>📅 ${brDate(item.date)}</span>
+              <span>💳 ${esc(item.paymentMethod||'Não informado')}</span>
+              ${item.document?`<span>🪪 ${esc(item.document)}</span>`:''}
+            </div>
+            <p>${esc(item.description||'Sem descrição')}</p>
+            ${item.notes?`<small class="receipt-note">${esc(item.notes)}</small>`:''}
+            <div class="receipt-actions">
+              <button class="primary receipt-open" data-id="${item.id}">📄 Gerar / salvar PDF</button>
+              <button class="secondary receipt-share" data-id="${item.id}">📤 Compartilhar PDF</button>
+              <button class="secondary receipt-edit" data-id="${item.id}">Editar</button>
+              <button class="secondary receipt-copy" data-id="${item.id}">Duplicar</button>
+              <button class="danger-button receipt-delete" data-id="${item.id}">Excluir</button>
+            </div>
+          </article>`).join(''):'<div class="empty-state">Nenhum recibo encontrado.</div>';
+
+        openModal(`<div class="receipt-title"><div><h2>Gerador de recibos</h2><p class="muted">Gere o recibo em PDF, salve no aparelho ou compartilhe direto no WhatsApp e outros aplicativos.</p></div></div>
+          <div class="receipt-dashboard">
+            <article><span>Recibos</span><strong>${allMine.length}</strong></article>
+            <article><span>Total no mês</span><strong>${moneyText(monthTotal)}</strong></article>
+            <article><span>Na pesquisa</span><strong>${mineReceipts.length}</strong></article>
+            <article><span>Valor filtrado</span><strong>${moneyText(total)}</strong></article>
+          </div>
+          <div class="receipt-search">
+            <input id="v10ReceiptSearch" placeholder="Pesquisar nome, recibo, CPF/CNPJ, telefone..." value="${esc(window.__fiaReceiptSearch||'')}">
+            <select id="v10ReceiptFilter"><option value="all" ${filter==='all'?'selected':''}>Todos</option><option value="today" ${filter==='today'?'selected':''}>Hoje</option><option value="month" ${filter==='month'?'selected':''}>Este mês</option></select>
+          </div>
+          <details class="receipt-form-box" ${editing?'open':''}><summary>➕ ${formTitle}</summary>
+            <form id="v10ReceiptForm" class="form-grid receipt-form">
+              <label>Recebido de<input id="v10ReceiptName" required value="${esc(editing?.name||'')}" placeholder="Nome do cliente"></label>
+              <div class="receipt-form-two"><label>CPF/CNPJ<input id="v10ReceiptDocument" value="${esc(editing?.document||'')}" placeholder="Opcional"></label><label>Telefone<input id="v10ReceiptPhone" inputmode="tel" value="${esc(editing?.phone||'')}" placeholder="Opcional"></label></div>
+              <div class="receipt-form-two"><label>Valor<input id="v10ReceiptValue" inputmode="decimal" required value="${editing?esc(Number(editing.value||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})):''}" placeholder="0,00"></label><label>Forma de pagamento<select id="v10ReceiptPayment"><option>Pix</option><option>Dinheiro</option><option>Cartão</option><option>Transferência</option><option>Boleto</option><option>Outro</option></select></label></div>
+              <label>Referente a<input id="v10ReceiptDescription" required value="${esc(editing?.description||'')}" placeholder="Ex.: Serviços prestados"></label>
+              <div class="receipt-form-two"><label>Data<input id="v10ReceiptDate" type="date" value="${esc(editing?.date||todayISO())}" required></label><label>Número do recibo<input id="v10ReceiptNumber" value="${esc(editing?.number||'')}" placeholder="Automático se vazio"></label></div>
+              <label>Observações<textarea id="v10ReceiptNotes" placeholder="Informações adicionais">${esc(editing?.notes||'')}</textarea></label>
+              <div class="modal-actions"><button class="primary" type="submit">${editing?'Salvar alterações':'Salvar e gerar PDF'}</button>${editing?'<button id="v10ReceiptCancelEdit" class="secondary" type="button">Cancelar</button>':''}</div>
+            </form>
+          </details>
+          <div class="receipt-list">${rows}</div>`);
+
+        const payment=$('v10ReceiptPayment'); if(payment) payment.value=editing?.paymentMethod||'Pix';
+        bindV10MoneyInputs('v10ReceiptValue');
+        const search=$('v10ReceiptSearch'); if(search) search.oninput=()=>{window.__fiaReceiptSearch=search.value;clearTimeout(window.__fiaReceiptTimer);window.__fiaReceiptTimer=setTimeout(()=>receiptsModal(),180)};
+        const sel=$('v10ReceiptFilter'); if(sel) sel.onchange=()=>{window.__fiaReceiptFilter=sel.value;receiptsModal()};
+        if($('v10ReceiptCancelEdit')) $('v10ReceiptCancelEdit').onclick=()=>receiptsModal();
+        $('v10ReceiptForm').onsubmit=async e=>{
+          e.preventDefault();
+          const data={name:$('v10ReceiptName').value.trim(),document:$('v10ReceiptDocument').value.trim(),phone:$('v10ReceiptPhone').value.trim(),value:numberValue($('v10ReceiptValue').value),paymentMethod:$('v10ReceiptPayment').value,description:$('v10ReceiptDescription').value.trim(),date:$('v10ReceiptDate').value,number:$('v10ReceiptNumber').value.trim(),notes:$('v10ReceiptNotes').value.trim(),status:'issued'};
+          if(!data.number) data.number=`REC-${data.date.replace(/-/g,'')}-${String(Date.now()).slice(-6)}`;
+          if(editing){ await updateItem('receipts',editing.id,data); toast('Recibo atualizado.'); receiptsModal(); }
+          else { const item=await addItem('receipts',data); await saveReceiptPdf(item); receiptsModal(); }
+        };
+        document.querySelectorAll('.receipt-open').forEach(btn=>btn.onclick=async()=>{const item=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(item)await saveReceiptPdf(item)});
+        document.querySelectorAll('.receipt-edit').forEach(btn=>btn.onclick=()=>receiptsModal(btn.dataset.id));
+        document.querySelectorAll('.receipt-share').forEach(btn=>btn.onclick=async()=>{const item=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(item)await shareReceiptPdf(item)});
+        document.querySelectorAll('.receipt-copy').forEach(btn=>btn.onclick=async()=>{const src=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(!src)return;const {id:_id,userId:_uid,createdAt:_created,updatedAt:_updated,...copy}=src;copy.date=todayISO();copy.number=`REC-${copy.date.replace(/-/g,'')}-${String(Date.now()).slice(-6)}`;await addItem('receipts',copy);toast('Recibo duplicado.');receiptsModal()});
+        document.querySelectorAll('.receipt-delete').forEach(btn=>btn.onclick=async()=>{if(!confirm('Excluir este recibo?'))return;await deleteItem('receipts',btn.dataset.id);toast('Recibo excluído.');receiptsModal()});
+      }
+
+      function receiptText(item) {
+        return `RECIBO ${receiptCode(item)}\nValor: ${moneyText(item.value)}\nRecebido de: ${item.name||''}${item.document?`\nCPF/CNPJ: ${item.document}`:''}\nReferente a: ${item.description||''}\nForma de pagamento: ${item.paymentMethod||'Não informado'}\nData: ${brDate(item.date)}${item.notes?`\nObservações: ${item.notes}`:''}`;
+      }
+
+      function receiptPdfFileName(item) {
+        const safeName=String(item?.name||'cliente').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/gi,'-').replace(/^-|-$/g,'').slice(0,40)||'cliente';
+        return `recibo-${receiptCode(item)}-${safeName}.pdf`;
+      }
+
+      function buildReceiptPdf(item) {
+        const jsPDFCtor=window.jspdf?.jsPDF;
+        if(!jsPDFCtor) throw new Error('Gerador de PDF ainda não carregou. Verifique a internet e tente novamente.');
+        const doc=new jsPDFCtor({unit:'mm',format:'a4',orientation:'portrait'});
+        const issuer=state.user?.name||'Finance IA Pro';
+        const pageW=210;
+        const margin=18;
+        const contentW=pageW-(margin*2);
+        const code=receiptCode(item);
+        const date=brDate(item.date);
+        const value=moneyText(item.value);
+        const line=(y)=>{doc.setDrawColor(45,211,164);doc.setLineWidth(.7);doc.line(margin,y,pageW-margin,y)};
+        const box=(x,y,w,h)=>{doc.setFillColor(246,249,250);doc.roundedRect(x,y,w,h,3,3,'F')};
+        doc.setTextColor(20,32,43);
+        doc.setFont('helvetica','bold');doc.setFontSize(18);doc.text(String(issuer),margin,24);
+        doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(100,116,132);doc.text('COMPROVANTE DE RECEBIMENTO',margin,30);
+        doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(20,32,43);doc.text(String(code),pageW-margin,23,{align:'right'});
+        doc.setFont('helvetica','normal');doc.setFontSize(9);doc.setTextColor(100,116,132);doc.text(String(date),pageW-margin,29,{align:'right'});
+        line(35);
+        doc.setFont('helvetica','bold');doc.setFontSize(26);doc.setTextColor(11,143,114);doc.text(String(value),margin,51);
+        box(margin,59,84,29);box(108,59,84,29);
+        doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(113,128,143);doc.text('RECEBIDO DE',margin+5,66);
+        doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(20,32,43);doc.text(doc.splitTextToSize(String(item.name||''),74),margin+5,73);
+        if(item.document){doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(100,116,132);doc.text(String(item.document),margin+5,84)}
+        doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(113,128,143);doc.text('FORMA DE PAGAMENTO',113,66);
+        doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(20,32,43);doc.text(String(item.paymentMethod||'Nao informado'),113,74);
+        if(item.phone){doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(100,116,132);doc.text(String(item.phone),113,84)}
+        box(margin,96,contentW,38);
+        doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(20,32,43);doc.text('REFERENTE A',margin+5,104);
+        doc.setFont('helvetica','normal');doc.setFontSize(10);doc.setTextColor(40,54,67);
+        const desc=doc.splitTextToSize(String(item.description||''),contentW-10);doc.text(desc,margin+5,112);
+        if(item.notes){
+          doc.setFontSize(8);doc.setTextColor(100,116,132);
+          const note=doc.splitTextToSize(`Observacoes: ${item.notes}`,contentW-10);doc.text(note,margin+5,126);
+        }
+        doc.setDrawColor(70,80,90);doc.setLineWidth(.25);doc.line(60,177,150,177);
+        doc.setFont('helvetica','bold');doc.setFontSize(10);doc.setTextColor(20,32,43);doc.text(String(issuer),105,183,{align:'center'});
+        doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(113,128,143);doc.text('Assinatura / responsavel',105,188,{align:'center'});
+        doc.setFontSize(7);doc.setTextColor(145,155,165);doc.text(`Gerado pelo Finance IA Pro • ${code}`,105,281,{align:'center'});
+        return doc;
+      }
+
+      async function saveReceiptPdf(item) {
+        try{
+          const doc=buildReceiptPdf(item);
+          doc.save(receiptPdfFileName(item));
+          toast('PDF gerado e salvo. Agora você pode enviar ao cliente.');
+        }catch(e){toast(e.message||'Não foi possível gerar o PDF.');}
+      }
+
+      async function shareReceiptPdf(item) {
+        try{
+          const doc=buildReceiptPdf(item);
+          const blob=doc.output('blob');
+          const file=new File([blob],receiptPdfFileName(item),{type:'application/pdf'});
+          const text=`Recibo ${receiptCode(item)} • ${moneyText(item.value)} • ${item.name||''}`;
+          if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+            await navigator.share({title:`Recibo ${receiptCode(item)}`,text,files:[file]});
+            return;
+          }
+          // Fallback: salva o PDF e abre o WhatsApp com uma mensagem pronta. O usuário só anexa o PDF salvo.
+          doc.save(receiptPdfFileName(item));
+          const wa=`https://wa.me/?text=${encodeURIComponent(`${text}\nPDF salvo no aparelho. Estou enviando o recibo em anexo.`)}`;
+          window.open(wa,'_blank');
+          toast('PDF salvo. Selecione o arquivo no WhatsApp para enviar.');
+        }catch(e){if(e?.name!=='AbortError')toast(e.message||'Não foi possível compartilhar o PDF.');}
       }
 
       function documentsModal() {
@@ -369,23 +572,100 @@
 
       function monthlyClientsModal(editId = null) {
         const editing=editId?(state.monthlyClients||[]).find(x=>x.id===editId):null;
-        const clients=mine(state.monthlyClients);
+        const allClients=mine(state.monthlyClients);
+        const query=String(window.__fiaMonthlySearch||'').trim().toLowerCase();
+        const filter=String(window.__fiaMonthlyFilter||'all');
+        const sort=String(window.__fiaMonthlySort||'name');
+        const today=new Date();
+        const todayDay=today.getDate();
+        const daysUntilClosing=(day)=>{
+          const closing=Math.min(Math.max(Number(day||30),1),31);
+          if(closing>=todayDay) return closing-todayDay;
+          const next=new Date(today.getFullYear(),today.getMonth()+1,closing);
+          return Math.ceil((next-new Date(today.getFullYear(),today.getMonth(),todayDay))/(86400000));
+        };
+        const calcTotal=c=>(c.entries||[]).reduce((sum,e)=>sum+Number(e.value||0),0);
+        const matches=c=>{
+          const total=calcTotal(c);
+          const text=[c.name,c.category,c.phone,c.notes].map(v=>String(v||'').toLowerCase()).join(' ');
+          if(query && !text.includes(query)) return false;
+          if(filter==='open' && total<=0) return false;
+          if(filter==='empty' && total>0) return false;
+          if(filter==='closing' && daysUntilClosing(c.closingDay)>7) return false;
+          if(filter==='today' && daysUntilClosing(c.closingDay)!==0) return false;
+          return true;
+        };
+        const clients=allClients.filter(matches).sort((a,b)=>{
+          if(sort==='totalDesc') return calcTotal(b)-calcTotal(a);
+          if(sort==='totalAsc') return calcTotal(a)-calcTotal(b);
+          if(sort==='closing') return daysUntilClosing(a.closingDay)-daysUntilClosing(b.closingDay);
+          return String(a.name||'').localeCompare(String(b.name||''),'pt-BR',{sensitivity:'base'});
+        });
+        const totalOpen=allClients.reduce((sum,c)=>sum+calcTotal(c),0);
+        const withOpen=allClients.filter(c=>calcTotal(c)>0).length;
+        const closingSoon=allClients.filter(c=>daysUntilClosing(c.closingDay)<=7).length;
         openModal(`<h2>Clientes com acerto mensal</h2><p class="muted">Cadastre clientes que usam o serviço durante o mês e pagam tudo de uma vez no fechamento.</p>
-          <form id="monthlyClientForm" class="form-grid"><label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label><label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label><label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label><button class="primary">${editing?'Salvar cliente':'Adicionar cliente mensal'}</button></form>
-          <div class="v10-list">${clients.length?clients.map(c=>{const total=(c.entries||[]).reduce((sum,e)=>sum+Number(e.value||0),0);return `<article class="v10-row"><div><b>${esc(c.name)}</b><small>${(c.entries||[]).length} lançamento(s) • Total aberto ${moneyText(total)} • fecha dia ${c.closingDay||30}</small></div><div class="v10-row-actions"><button class="primary monthly-open" data-id="${c.id}">Abrir</button><button class="secondary monthly-edit" data-id="${c.id}">Editar</button><button class="danger-button monthly-delete" data-id="${c.id}">Excluir</button></div></article>`}).join(''):'<div class="empty-state">Nenhum cliente mensal cadastrado.</div>'}</div>`);
-        $('monthlyClientForm').onsubmit=async e=>{e.preventDefault();const data={name:$('monthlyClientName').value.trim(),closingDay:Number($('monthlyClientDay').value),category:$('monthlyClientCategory').value.trim()||'Serviços',entries:editing?.entries||[],settlements:editing?.settlements||[],status:'active'};if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);monthlyClientsModal();toast('Cliente mensal salvo.');};
+          <section class="monthly-dashboard">
+            <article><span>Clientes</span><strong>${allClients.length}</strong></article>
+            <article><span>Com saldo aberto</span><strong>${withOpen}</strong></article>
+            <article><span>Total a receber</span><strong>${moneyText(totalOpen)}</strong></article>
+            <article><span>Fecham em até 7 dias</span><strong>${closingSoon}</strong></article>
+          </section>
+          <section class="monthly-search-box">
+            <div class="monthly-search-row"><input id="monthlySearch" placeholder="🔎 Buscar cliente, telefone ou categoria" value="${esc(window.__fiaMonthlySearch||'')}"><button id="monthlyClearSearch" type="button" class="secondary">Limpar</button></div>
+            <div class="monthly-filter-grid">
+              <select id="monthlyFilter"><option value="all" ${filter==='all'?'selected':''}>Todos</option><option value="open" ${filter==='open'?'selected':''}>Com saldo aberto</option><option value="empty" ${filter==='empty'?'selected':''}>Sem lançamentos</option><option value="closing" ${filter==='closing'?'selected':''}>Fecha em até 7 dias</option><option value="today" ${filter==='today'?'selected':''}>Fecha hoje</option></select>
+              <select id="monthlySort"><option value="name" ${sort==='name'?'selected':''}>Nome A-Z</option><option value="totalDesc" ${sort==='totalDesc'?'selected':''}>Maior saldo</option><option value="totalAsc" ${sort==='totalAsc'?'selected':''}>Menor saldo</option><option value="closing" ${sort==='closing'?'selected':''}>Próximo fechamento</option></select>
+            </div>
+            <small class="monthly-result-count">${clients.length} de ${allClients.length} cliente(s) exibido(s)</small>
+          </section>
+          <details class="monthly-new-client" ${editing?'open':''}><summary>${editing?'✏️ Editando cliente':'＋ Cadastrar novo cliente mensal'}</summary>
+          <form id="monthlyClientForm" class="form-grid"><label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label><label>Telefone / WhatsApp<input id="monthlyClientPhone" inputmode="tel" placeholder="(00) 00000-0000" value="${esc(editing?.phone||'')}"></label><label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label><label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label><label>Observações<textarea id="monthlyClientNotes" placeholder="Informações importantes do cliente">${esc(editing?.notes||'')}</textarea></label><button class="primary">${editing?'Salvar alterações':'Adicionar cliente mensal'}</button>${editing?'<button id="monthlyCancelEdit" type="button" class="secondary">Cancelar edição</button>':''}</form></details>
+          <div class="v10-list monthly-client-list">${clients.length?clients.map(c=>{const total=calcTotal(c);const d=daysUntilClosing(c.closingDay);const dueText=d===0?'Fecha hoje':d===1?'Fecha amanhã':`Fecha em ${d} dias`;const statusClass=total>0?'has-open':'is-clear';return `<article class="monthly-client-card ${statusClass}">
+              <div class="monthly-client-head">
+                <div class="monthly-client-identity"><b>${esc(c.name)}</b>${c.category?`<small>${esc(c.category)}</small>`:''}</div>
+                <span class="monthly-status-chip ${statusClass}">${total>0?'Em aberto':'Em dia'}</span>
+              </div>
+              <div class="monthly-client-stats">
+                <div><span>Lançamentos</span><strong>${(c.entries||[]).length}</strong></div>
+                <div><span>Total aberto</span><strong>${moneyText(total)}</strong></div>
+                <div><span>Fechamento</span><strong>${d===0?'Hoje':`Dia ${c.closingDay||30}`}</strong><small>${d===0?'Fechamento hoje':dueText}</small></div>
+              </div>
+              ${c.phone?`<div class="monthly-client-contact">📱 <span>${esc(c.phone)}</span></div>`:''}
+              ${c.notes?`<div class="monthly-client-note">${esc(c.notes)}</div>`:''}
+              <div class="monthly-client-actions">
+                <button class="primary monthly-open" data-id="${c.id}">Abrir cliente</button>
+                ${c.phone?`<button class="secondary monthly-whatsapp" data-phone="${esc(c.phone)}" data-name="${esc(c.name)}">WhatsApp</button>`:''}
+                <button class="secondary monthly-edit" data-id="${c.id}">Editar</button>
+                <button class="danger-button monthly-delete" data-id="${c.id}">Excluir</button>
+              </div>
+            </article>`}).join(''):'<div class="empty-state">Nenhum cliente encontrado com esses filtros.</div>'}</div>`);
+        const rerender=()=>monthlyClientsModal(editId);
+        const searchEl=$('monthlySearch');
+        if(searchEl){let timer;searchEl.oninput=()=>{clearTimeout(timer);window.__fiaMonthlySearch=searchEl.value;timer=setTimeout(()=>monthlyClientsModal(editId),180);};}
+        $('monthlyClearSearch').onclick=()=>{window.__fiaMonthlySearch='';window.__fiaMonthlyFilter='all';window.__fiaMonthlySort='name';monthlyClientsModal(editId);};
+        $('monthlyFilter').onchange=e=>{window.__fiaMonthlyFilter=e.target.value;monthlyClientsModal(editId);};
+        $('monthlySort').onchange=e=>{window.__fiaMonthlySort=e.target.value;monthlyClientsModal(editId);};
+        $('monthlyClientForm').onsubmit=async e=>{e.preventDefault();const data={name:$('monthlyClientName').value.trim(),phone:$('monthlyClientPhone').value.trim(),closingDay:Number($('monthlyClientDay').value),category:$('monthlyClientCategory').value.trim()||'Serviços',notes:$('monthlyClientNotes').value.trim(),entries:editing?.entries||[],settlements:editing?.settlements||[],status:'active'};if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);monthlyClientsModal();toast('Cliente mensal salvo.');};
+        const cancel=$('monthlyCancelEdit');if(cancel)cancel.onclick=()=>monthlyClientsModal();
         document.querySelectorAll('.monthly-open').forEach(b=>b.onclick=()=>monthlyClientDetails(b.dataset.id));
         document.querySelectorAll('.monthly-edit').forEach(b=>b.onclick=()=>monthlyClientsModal(b.dataset.id));
+        document.querySelectorAll('.monthly-whatsapp').forEach(b=>b.onclick=()=>{const phone=String(b.dataset.phone||'').replace(/\D/g,'');if(!phone)return toast('Telefone não informado.');const normalized=phone.startsWith('55')?phone:`55${phone}`;window.open(`https://wa.me/${normalized}?text=${encodeURIComponent(`Olá ${b.dataset.name||''}, tudo bem? Estou entrando em contato sobre seu acerto mensal.`)}`,'_blank');});
         document.querySelectorAll('.monthly-delete').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este cliente mensal e seus lançamentos abertos?'))return;await deleteItem('monthlyClients',b.dataset.id);monthlyClientsModal();});
       }
       function monthlyClientDetails(clientId) {
         const client=(state.monthlyClients||[]).find(x=>x.id===clientId);if(!client)return;const entries=client.entries||[];const total=entries.reduce((s,e)=>s+Number(e.value||0),0);
-        openModal(`<h2>${esc(client.name)}</h2><div class="summary-grid"><article class="summary"><span>Lançamentos abertos</span><strong>${entries.length}</strong></article><article class="summary"><span>Total a receber</span><strong>${moneyText(total)}</strong></article></div>
+        const settlements=client.settlements||[];
+        openModal(`<h2>${esc(client.name)}</h2><p class="muted">${client.phone?`📱 ${esc(client.phone)} • `:''}fecha dia ${client.closingDay||30}${client.category?` • ${esc(client.category)}`:''}</p><div class="summary-grid"><article class="summary"><span>Lançamentos abertos</span><strong>${entries.length}</strong></article><article class="summary"><span>Total a receber</span><strong>${moneyText(total)}</strong></article><article class="summary"><span>Fechamentos anteriores</span><strong>${settlements.length}</strong></article><article class="summary"><span>Último recebimento</span><strong>${client.lastReceivedAt?new Date(client.lastReceivedAt).toLocaleDateString('pt-BR'):'—'}</strong></article></div>
           <form id="monthlyEntryForm" class="form-grid"><label>Descrição<input id="monthlyEntryDescription" required placeholder="Ex.: Serviço da semana"></label><label>Valor<input id="monthlyEntryValue" inputmode="decimal" required></label><label>Data<input id="monthlyEntryDate" type="date" value="${todayISO()}" required></label><button class="primary">Adicionar ao mês</button></form>
-          <div class="v10-list">${entries.length?entries.map(e=>`<article class="v10-row"><div><b>${esc(e.description)}</b><small>${brDate(e.date)} • ${moneyText(e.value)}</small></div><button class="danger-button monthly-entry-delete" data-id="${e.id}">Excluir</button></article>`).join(''):'<div class="empty-state">Nenhum serviço lançado neste mês.</div>'}</div>
+          <div class="monthly-entry-toolbar"><input id="monthlyEntrySearch" placeholder="🔎 Buscar lançamento"><span>${entries.length} item(ns)</span></div>
+          <div id="monthlyEntriesList" class="v10-list">${entries.length?entries.map(e=>`<article class="v10-row monthly-entry-row" data-search="${esc(String(e.description||'').toLowerCase())}"><div><b>${esc(e.description)}</b><small>${brDate(e.date)} • ${moneyText(e.value)}</small></div><div class="v10-row-actions"><button class="secondary monthly-entry-edit" data-id="${e.id}">Editar</button><button class="danger-button monthly-entry-delete" data-id="${e.id}">Excluir</button></div></article>`).join(''):'<div class="empty-state">Nenhum serviço lançado neste mês.</div>'}</div>
+          ${settlements.length?`<details class="monthly-settlements"><summary>Ver últimos fechamentos</summary>${settlements.slice(0,6).map(s=>`<div class="monthly-settlement-row"><span>${brDate(s.date)}</span><strong>${moneyText(s.value)}</strong><small>${(s.entries||[]).length} item(ns)</small></div>`).join('')}</details>`:''}
           <div class="modal-actions"><button id="monthlyReceiveAll" class="primary" ${total<=0?'disabled':''}>Receber total ${moneyText(total)}</button><button id="monthlyBack" class="secondary">Voltar</button></div>`);
         bindV10MoneyInputs('monthlyEntryValue');
         $('monthlyEntryForm').onsubmit=async e=>{e.preventDefault();client.entries=client.entries||[];client.entries.push({id:id(),description:$('monthlyEntryDescription').value.trim(),value:numberValue($('monthlyEntryValue').value),date:$('monthlyEntryDate').value,createdAt:Date.now()});await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);toast('Valor adicionado ao acerto mensal.');};
+        const entrySearch=$('monthlyEntrySearch');if(entrySearch)entrySearch.oninput=()=>{const q=entrySearch.value.trim().toLowerCase();document.querySelectorAll('.monthly-entry-row').forEach(row=>row.style.display=!q||String(row.dataset.search||'').includes(q)?'':'none');};
+        document.querySelectorAll('.monthly-entry-edit').forEach(b=>b.onclick=()=>{const entry=(client.entries||[]).find(e=>e.id===b.dataset.id);if(!entry)return;openModal(`<h2>Editar lançamento</h2><form id="monthlyEntryEditForm" class="form-grid"><label>Descrição<input id="monthlyEntryEditDescription" value="${esc(entry.description||'')}" required></label><label>Valor<input id="monthlyEntryEditValue" inputmode="decimal" value="${esc(Number(entry.value||0).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}))}" required></label><label>Data<input id="monthlyEntryEditDate" type="date" value="${esc(entry.date||todayISO())}" required></label><button class="primary">Salvar</button><button id="monthlyEntryEditCancel" type="button" class="secondary">Cancelar</button></form>`);bindV10MoneyInputs('monthlyEntryEditValue');$('monthlyEntryEditCancel').onclick=()=>monthlyClientDetails(client.id);$('monthlyEntryEditForm').onsubmit=async e=>{e.preventDefault();entry.description=$('monthlyEntryEditDescription').value.trim();entry.value=numberValue($('monthlyEntryEditValue').value);entry.date=$('monthlyEntryEditDate').value;entry.updatedAt=Date.now();await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);toast('Lançamento atualizado.');};});
         document.querySelectorAll('.monthly-entry-delete').forEach(b=>b.onclick=async()=>{client.entries=(client.entries||[]).filter(e=>e.id!==b.dataset.id);await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);});
         $('monthlyBack').onclick=()=>monthlyClientsModal();
         $('monthlyReceiveAll').onclick=async()=>{if(total<=0)return;if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;const now=Date.now();const tx={id:id(),userId:uid(),type:'income',description:`Acerto mensal - ${client.name}`,value:total,category:client.category||'Serviços',date:todayISO(),createdAt:now,sourceMonthlyClientId:client.id,sourceType:'monthlyClient',itemsCount:entries.length,status:'received'};state.transactions.push(tx);client.settlements=client.settlements||[];client.settlements.unshift({id:id(),value:total,date:todayISO(),createdAt:now,entries:[...entries]});client.entries=[];client.lastReceivedAt=now;client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);await updateItem('monthlyClients',client.id,{entries:client.entries,settlements:client.settlements,lastReceivedAt:now,nextClosingDate:client.nextClosingDate});if(typeof persist==='function')persist();if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}monthlyClientDetails(client.id);if(typeof render==='function')render();toast('Acerto recebido, salvo nas receitas e lançamentos abertos limpos.');};
