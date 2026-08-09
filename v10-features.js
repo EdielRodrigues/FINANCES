@@ -559,9 +559,135 @@
         }catch(e){if(e?.name!=='AbortError')toast(e.message||'Não foi possível compartilhar o PDF.');}
       }
 
-      function documentsModal() {
-        openModal(`<h2>Central de documentos</h2><p class="muted">Cadastre referências de comprovantes, contratos e garantias. Os arquivos podem ser guardados no Firebase Storage em uma atualização posterior.</p><form id="v10DocumentForm" class="form-grid"><label>Título<input id="v10DocTitle" required></label><label>Tipo<select id="v10DocType"><option>Comprovante</option><option>Contrato</option><option>Nota fiscal</option><option>Garantia</option><option>Outro</option></select></label><label>Data<input id="v10DocDate" type="date" required></label><label>Observações<textarea id="v10DocNotes"></textarea></label><button class="primary">Salvar referência</button></form><div class="v10-list">${listHtml('documents')}</div>`);
-        $('v10DocumentForm').onsubmit=async e=>{e.preventDefault();await addItem('documents',{title:$('v10DocTitle').value,name:$('v10DocTitle').value,type:$('v10DocType').value,date:$('v10DocDate').value,notes:$('v10DocNotes').value});documentsModal();}; bindDeletes(documentsModal);
+      function documentDaysUntil(value) {
+        if(!value) return null;
+        const target=new Date(`${value}T12:00:00`);
+        const today=new Date(); today.setHours(12,0,0,0);
+        return Math.ceil((target-today)/86400000);
+      }
+
+      function documentStatus(item) {
+        if(item.status==='arquivado') return {key:'archived',label:'Arquivado'};
+        const days=documentDaysUntil(item.expiryDate);
+        if(days!==null && days<0) return {key:'expired',label:'Vencido'};
+        if(days!==null && days<=30) return {key:'warning',label:`Vence em ${days} dia${days===1?'':'s'}`};
+        return {key:'active',label:'Ativo'};
+      }
+
+      function documentSearchMatch(item, query, filter) {
+        const text=[item.title,item.name,item.type,item.issuer,item.documentNumber,item.tags,item.notes]
+          .map(v=>String(v||'').toLowerCase()).join(' ');
+        if(query && !text.includes(query)) return false;
+        const status=documentStatus(item).key;
+        if(filter==='file' && !item.fileUrl && !item.fileName) return false;
+        if(filter==='expiring' && status!=='warning') return false;
+        if(filter==='expired' && status!=='expired') return false;
+        if(filter!=='all' && !['file','expiring','expired'].includes(filter) && String(item.type||'')!==filter) return false;
+        return true;
+      }
+
+      async function uploadDocumentFile(file, documentId) {
+        if(!file) return null;
+        if(file.size>12*1024*1024) throw new Error('O arquivo deve ter no máximo 12 MB.');
+        if(!window.firebase?.storage || !cloudReady || !uid()) throw new Error('Firebase Storage não está disponível nesta publicação.');
+        const safeName=String(file.name||'arquivo').replace(/[^a-zA-Z0-9._-]/g,'_');
+        const path=`userDocuments/${uid()}/${documentId}/${Date.now()}_${safeName}`;
+        const ref=firebase.storage().ref(path);
+        await ref.put(file,{contentType:file.type||'application/octet-stream'});
+        return {fileUrl:await ref.getDownloadURL(),filePath:path,fileName:file.name,fileType:file.type||'',fileSize:file.size};
+      }
+
+      async function deleteDocumentFile(item) {
+        if(!item?.filePath || !window.firebase?.storage) return;
+        try{await firebase.storage().ref(item.filePath).delete();}catch(_e){}
+      }
+
+      async function shareDocumentItem(item) {
+        const title=item.title||item.name||'Documento';
+        const text=`${title}${item.type?` • ${item.type}`:''}${item.date?` • ${brDate(item.date)}`:''}${item.fileUrl?`\n${item.fileUrl}`:''}`;
+        try{
+          if(navigator.share){await navigator.share({title,text,url:item.fileUrl||undefined});return;}
+        }catch(e){if(e?.name==='AbortError')return;}
+        if(item.fileUrl){try{await navigator.clipboard.writeText(item.fileUrl);toast('Link do documento copiado.');return;}catch(_e){}}
+        toast('Compartilhamento não disponível neste aparelho.');
+      }
+
+      function documentsModal(editId = null) {
+        const editing=editId?(state.documents||[]).find(x=>x.id===editId):null;
+        const query=String(window.__fiaDocumentSearch||'').trim().toLowerCase();
+        const filter=String(window.__fiaDocumentFilter||'all');
+        const allDocs=mine(state.documents).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')) || Number(b.createdAt||0)-Number(a.createdAt||0));
+        const docs=allDocs.filter(x=>documentSearchMatch(x,query,filter));
+        const withFiles=allDocs.filter(x=>x.fileUrl||x.fileName).length;
+        const expiring=allDocs.filter(x=>documentStatus(x).key==='warning').length;
+        const expired=allDocs.filter(x=>documentStatus(x).key==='expired').length;
+        const rows=docs.length?docs.map(item=>{
+          const status=documentStatus(item);
+          return `<article class="doc-card doc-${status.key}">
+            <div class="doc-card-head"><div><b>${esc(item.title||item.name||'Documento')}</b><small>${esc(item.type||'Outro')} • ${brDate(item.date)}</small></div><span class="doc-status">${esc(status.label)}</span></div>
+            <div class="doc-meta">
+              ${item.issuer?`<span>👤 ${esc(item.issuer)}</span>`:''}
+              ${item.documentNumber?`<span>🔖 ${esc(item.documentNumber)}</span>`:''}
+              ${item.expiryDate?`<span>⏳ ${brDate(item.expiryDate)}</span>`:''}
+              ${item.fileName?`<span>📎 ${esc(item.fileName)}</span>`:'<span>📄 Sem arquivo anexado</span>'}
+            </div>
+            ${item.tags?`<small class="doc-tags">${esc(item.tags)}</small>`:''}
+            ${item.notes?`<p>${esc(item.notes)}</p>`:''}
+            <div class="doc-actions">
+              ${item.fileUrl?`<button class="primary doc-open" data-id="${item.id}">Abrir arquivo</button><button class="secondary doc-share" data-id="${item.id}">Compartilhar</button>`:''}
+              <button class="secondary doc-edit" data-id="${item.id}">Editar</button>
+              <button class="danger-button doc-delete" data-id="${item.id}">Excluir</button>
+            </div>
+          </article>`;
+        }).join(''):'<div class="empty-state">Nenhum documento encontrado.</div>';
+
+        openModal(`<div class="doc-title"><div><h2>Central de documentos</h2><p class="muted">Organize comprovantes, contratos, notas, garantias e arquivos importantes em um só lugar.</p></div></div>
+          <section class="doc-dashboard">
+            <article><span>Documentos</span><strong>${allDocs.length}</strong></article>
+            <article><span>Com arquivo</span><strong>${withFiles}</strong></article>
+            <article><span>Vencem em 30 dias</span><strong>${expiring}</strong></article>
+            <article><span>Vencidos</span><strong>${expired}</strong></article>
+          </section>
+          <div class="doc-search"><input id="v10DocSearch" placeholder="Pesquisar título, número, pessoa, tag..."><select id="v10DocFilter">
+            <option value="all">Todos</option><option value="file">Com arquivo</option><option value="expiring">Vencendo</option><option value="expired">Vencidos</option>
+            <option>Comprovante</option><option>Contrato</option><option>Nota fiscal</option><option>Garantia</option><option>Documento pessoal</option><option>Orçamento</option><option>Outro</option></select></div>
+          <details class="doc-form-box" ${editing?'open':''}><summary>➕ ${editing?'Editar documento':'Novo documento'}</summary>
+            <form id="v10DocumentForm" class="form-grid">
+              <label>Título<input id="v10DocTitle" required value="${esc(editing?.title||editing?.name||'')}" placeholder="Ex.: Contrato de aluguel"></label>
+              <div class="doc-form-two"><label>Tipo<select id="v10DocType"><option>Comprovante</option><option>Contrato</option><option>Nota fiscal</option><option>Garantia</option><option>Documento pessoal</option><option>Orçamento</option><option>Outro</option></select></label><label>Número / referência<input id="v10DocNumber" value="${esc(editing?.documentNumber||'')}" placeholder="Opcional"></label></div>
+              <div class="doc-form-two"><label>Data<input id="v10DocDate" type="date" required value="${esc(editing?.date||todayISO())}"></label><label>Validade / vencimento<input id="v10DocExpiry" type="date" value="${esc(editing?.expiryDate||'')}"></label></div>
+              <label>Pessoa / empresa relacionada<input id="v10DocIssuer" value="${esc(editing?.issuer||'')}" placeholder="Ex.: Cliente, fornecedor, imobiliária"></label>
+              <label>Tags<input id="v10DocTags" value="${esc(editing?.tags||'')}" placeholder="Ex.: casa, imposto, cliente"></label>
+              <label>Status<select id="v10DocStatus"><option value="ativo">Ativo</option><option value="arquivado">Arquivado</option></select></label>
+              <label>Anexar arquivo<input id="v10DocFile" type="file" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt"><small class="muted">PDF, foto ou documento até 12 MB. ${editing?.fileName?`Atual: ${esc(editing.fileName)}`:'O arquivo será salvo no Firebase Storage.'}</small></label>
+              <label>Observações<textarea id="v10DocNotes" placeholder="Informações importantes">${esc(editing?.notes||'')}</textarea></label>
+              <button id="v10DocSave" class="primary">${editing?'Salvar alterações':'Salvar documento'}</button>
+            </form>
+          </details>
+          <div class="doc-list">${rows}</div>`);
+
+        $('v10DocSearch').value=window.__fiaDocumentSearch||''; $('v10DocFilter').value=filter;
+        $('v10DocType').value=editing?.type||'Comprovante'; $('v10DocStatus').value=editing?.status||'ativo';
+        $('v10DocSearch').oninput=e=>{window.__fiaDocumentSearch=e.target.value;documentsModal(editId)};
+        $('v10DocFilter').onchange=e=>{window.__fiaDocumentFilter=e.target.value;documentsModal(editId)};
+        $('v10DocumentForm').onsubmit=async e=>{
+          e.preventDefault(); const saveBtn=$('v10DocSave'); saveBtn.disabled=true; saveBtn.textContent='Salvando...';
+          try{
+            const base={title:$('v10DocTitle').value.trim(),name:$('v10DocTitle').value.trim(),type:$('v10DocType').value,date:$('v10DocDate').value,expiryDate:$('v10DocExpiry').value,issuer:$('v10DocIssuer').value.trim(),documentNumber:$('v10DocNumber').value.trim(),tags:$('v10DocTags').value.trim(),status:$('v10DocStatus').value,notes:$('v10DocNotes').value.trim()};
+            const file=$('v10DocFile').files?.[0]||null;
+            if(editing){
+              let fileData={}; if(file){fileData=await uploadDocumentFile(file,editing.id);await deleteDocumentFile(editing)}
+              await updateItem('documents',editing.id,{...base,...fileData}); toast('Documento atualizado.');
+            }else{
+              const item=await addItem('documents',base); if(file){const fileData=await uploadDocumentFile(file,item.id);await updateItem('documents',item.id,fileData)} toast('Documento salvo.');
+            }
+            documentsModal();
+          }catch(err){toast(err.message||'Não foi possível salvar o documento.');saveBtn.disabled=false;saveBtn.textContent=editing?'Salvar alterações':'Salvar documento';}
+        };
+        document.querySelectorAll('.doc-open').forEach(b=>b.onclick=()=>{const item=(state.documents||[]).find(x=>x.id===b.dataset.id);if(item?.fileUrl)window.open(item.fileUrl,'_blank')});
+        document.querySelectorAll('.doc-share').forEach(b=>b.onclick=()=>{const item=(state.documents||[]).find(x=>x.id===b.dataset.id);if(item)shareDocumentItem(item)});
+        document.querySelectorAll('.doc-edit').forEach(b=>b.onclick=()=>documentsModal(b.dataset.id));
+        document.querySelectorAll('.doc-delete').forEach(b=>b.onclick=async()=>{const item=(state.documents||[]).find(x=>x.id===b.dataset.id);if(!item||!confirm('Excluir este documento?'))return;await deleteDocumentFile(item);await deleteItem('documents',item.id);documentsModal();toast('Documento excluído.');});
       }
 
       function planningModal() {
