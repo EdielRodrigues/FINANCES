@@ -1,4 +1,4 @@
-/* Finance IA Pro v10.1.3 — sincronização dupla Firebase + cache local */
+/* Finance IA Pro v10.1.6 — Firebase principal + cache local sincronizado */
 (() => {
   'use strict';
 
