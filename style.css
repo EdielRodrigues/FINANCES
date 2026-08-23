@@ -753,3 +753,12 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 /* V10.1.5 — AGENDA AVANÇADA */
 .fia-booking-stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.fia-booking-stats>div{background:#091827;border:1px solid var(--line);border-radius:14px;padding:11px}.fia-booking-stats span{display:block;color:var(--muted);font-size:10px}.fia-booking-stats strong{display:block;margin-top:5px;font-size:16px}.fia-booking-tools{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:8px;margin-bottom:10px}.fia-booking-tools input,.fia-booking-tools select{width:100%;background:#071522;color:var(--text);border:1px solid var(--line);border-radius:12px;padding:11px}.fia-booking-record-top{display:flex;align-items:center;justify-content:space-between;gap:8px}.fia-booking-status{display:inline-flex!important;width:max-content;padding:4px 8px;border-radius:999px;font-size:8px!important;font-weight:900}.fia-booking-status.st-confirmed{background:rgba(49,215,164,.14);color:#54e7b9}.fia-booking-status.st-completed{background:rgba(77,160,255,.16);color:#83bdff}.fia-booking-status.st-missed{background:rgba(255,159,10,.16);color:#ffbd57}.fia-booking-status.st-waiting{background:rgba(250,204,21,.15);color:#ffe15c}.success-button{background:#113d2c!important;color:#75efb4!important;border:1px solid rgba(117,239,180,.3)!important}.warning-button{background:#3b2d0d!important;color:#ffd36b!important;border:1px solid rgba(255,211,107,.25)!important}.fia-booking-record-actions{grid-template-columns:repeat(2,minmax(0,1fr))!important;min-width:210px}.fia-booking-record.st-completed{border-color:rgba(77,160,255,.35)}.fia-booking-record.st-missed{border-color:rgba(255,159,10,.35)}
 @media(max-width:600px){.fia-booking-stats{grid-template-columns:repeat(2,minmax(0,1fr))}.fia-booking-tools{grid-template-columns:1fr}.fia-booking-record-actions{min-width:0;grid-template-columns:repeat(2,minmax(0,1fr))!important}}
+
+/* V10.1.8 — recibos em tempo real */
+.receipt-live-badge{
+  display:inline-flex;align-items:center;gap:5px;margin:2px 0 7px;
+  padding:5px 9px;border-radius:999px;
+  background:rgba(49,215,164,.10);
+  border:1px solid rgba(49,215,164,.26);
+  color:var(--primary);font-size:9px;font-weight:800;
+}

@@ -118,6 +118,18 @@
               state[type] = [...(state[type] || []).filter(x => x.userId !== userId), ...remote];
               saveLocal(type);
               render();
+
+              // V10.1.8 — atualização em tempo real das telas abertas.
+              // Antes, o Firebase atualizava o state, mas o modal de recibos
+              // continuava mostrando o HTML antigo até fechar e abrir novamente.
+              if (type === 'receipts' && document.getElementById('v10ReceiptSearch')) {
+                clearTimeout(window.__fiaReceiptLiveRefresh);
+                window.__fiaReceiptLiveRefresh = setTimeout(() => receiptsModal(), 80);
+              }
+              if (type === 'documents' && document.getElementById('v10DocumentSearch')) {
+                clearTimeout(window.__fiaDocumentLiveRefresh);
+                window.__fiaDocumentLiveRefresh = setTimeout(() => documentsModal(), 80);
+              }
             }
           });
           cloudUnsubs.push(() => ref.off('value', listener));
@@ -439,7 +451,7 @@
             </div>
           </article>`).join(''):'<div class="empty-state">Nenhum recibo encontrado.</div>';
 
-        openModal(`<div class="receipt-title"><div><h2>Gerador de recibos</h2><p class="muted">Gere o recibo em PDF, salve no aparelho ou compartilhe direto no WhatsApp e outros aplicativos.</p></div></div>
+        openModal(`<div class="receipt-title"><div><h2>Gerador de recibos</h2><p class="muted">Gere o recibo em PDF, salve no aparelho ou compartilhe direto no WhatsApp e outros aplicativos.</p><span class="receipt-live-badge">● Atualização automática • Firebase + cache local</span></div></div>
           <div class="receipt-dashboard">
             <article><span>Recibos</span><strong>${allMine.length}</strong></article>
             <article><span>Total no mês</span><strong>${moneyText(monthTotal)}</strong></article>
@@ -472,13 +484,31 @@
           e.preventDefault();
           const data={name:$('v10ReceiptName').value.trim(),document:$('v10ReceiptDocument').value.trim(),phone:$('v10ReceiptPhone').value.trim(),value:numberValue($('v10ReceiptValue').value),paymentMethod:$('v10ReceiptPayment').value,description:$('v10ReceiptDescription').value.trim(),date:$('v10ReceiptDate').value,number:$('v10ReceiptNumber').value.trim(),notes:$('v10ReceiptNotes').value.trim(),status:'issued'};
           if(!data.number) data.number=`REC-${data.date.replace(/-/g,'')}-${String(Date.now()).slice(-6)}`;
-          if(editing){ await updateItem('receipts',editing.id,data); toast('Recibo atualizado.'); receiptsModal(); }
-          else { const item=await addItem('receipts',data); await saveReceiptPdf(item); receiptsModal(); }
+          if(editing){
+            await updateItem('receipts',editing.id,data);
+            toast('Recibo atualizado.');
+            receiptsModal();
+          } else {
+            const item = await addItem('receipts',data);
+
+            // Atualiza lista, contadores e valores imediatamente,
+            // sem precisar fechar e abrir a página.
+            receiptsModal();
+            toast('Recibo salvo e lista atualizada.');
+
+            // O PDF é gerado depois do refresh visual.
+            setTimeout(() => {
+              saveReceiptPdf(item).catch(err => {
+                console.error('Erro ao gerar PDF do recibo:', err);
+                toast('Recibo salvo. Não foi possível gerar o PDF automaticamente.');
+              });
+            }, 120);
+          }
         };
         document.querySelectorAll('.receipt-open').forEach(btn=>btn.onclick=async()=>{const item=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(item)await saveReceiptPdf(item)});
         document.querySelectorAll('.receipt-edit').forEach(btn=>btn.onclick=()=>receiptsModal(btn.dataset.id));
         document.querySelectorAll('.receipt-share').forEach(btn=>btn.onclick=async()=>{const item=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(item)await shareReceiptPdf(item)});
-        document.querySelectorAll('.receipt-copy').forEach(btn=>btn.onclick=async()=>{const src=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(!src)return;const {id:_id,userId:_uid,createdAt:_created,updatedAt:_updated,...copy}=src;copy.date=todayISO();copy.number=`REC-${copy.date.replace(/-/g,'')}-${String(Date.now()).slice(-6)}`;await addItem('receipts',copy);toast('Recibo duplicado.');receiptsModal()});
+        document.querySelectorAll('.receipt-copy').forEach(btn=>btn.onclick=async()=>{const src=(state.receipts||[]).find(x=>x.id===btn.dataset.id);if(!src)return;const {id:_id,userId:_uid,createdAt:_created,updatedAt:_updated,...copy}=src;copy.date=todayISO();copy.number=`REC-${copy.date.replace(/-/g,'')}-${String(Date.now()).slice(-6)}`;await addItem('receipts',copy);receiptsModal();toast('Recibo duplicado e atualizado na lista.')});
         document.querySelectorAll('.receipt-delete').forEach(btn=>btn.onclick=async()=>{if(!confirm('Excluir este recibo?'))return;await deleteItem('receipts',btn.dataset.id);toast('Recibo excluído.');receiptsModal()});
       }
 
