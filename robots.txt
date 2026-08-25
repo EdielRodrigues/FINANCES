@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# O sitemap está disponível em /sitemap.xml.
+# Depois de publicar o site, envie esse endereço no Google Search Console.

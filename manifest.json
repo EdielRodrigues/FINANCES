@@ -1,11 +1,11 @@
 {
-  "name": "Finance IA Pro 10.1.1",
-  "short_name": "Finance IA Pro.1.1",
+  "name": "Finance IA Pro — Controle Financeiro Inteligente",
+  "short_name": "Finance IA Pro",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
-  "description": "Plataforma completa de gestão financeira pessoal, familiar e empresarial com IA, Pix e Firebase.",
+  "description": "Controle financeiro inteligente com receitas, despesas, metas, contas, relatórios, clientes, recibos e agendamentos.",
   "icons": [
     {
       "src": "icon-192.png",
@@ -17,5 +17,9 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "categories": [
+    "finance",
+    "productivity"
   ]
 }

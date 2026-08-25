@@ -799,28 +799,71 @@
         const rerender=()=>monthlyClientsModal(editId);
         const searchEl=$('monthlySearch');
 
-        // V10.1.9 — pesquisa local sem recriar o modal.
-        // Mantém o foco e o teclado aberto enquanto o usuário digita.
+        // V10.2.0 — pesquisa instantânea corrigida.
+        // Filtra os cards já abertos, sem recriar o modal e sem perder o foco.
+        const normalizeMonthlyText=(value)=>String(value||'')
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g,'')
+          .toLowerCase()
+          .trim();
+
         const applyMonthlySearch=()=>{
           if(!searchEl)return;
-          const q=searchEl.value.trim().toLowerCase();
+          const q=normalizeMonthlyText(searchEl.value);
           window.__fiaMonthlySearch=searchEl.value;
+
+          const cards=[...document.querySelectorAll('.monthly-client-list .monthly-client-card')];
           let visible=0;
-          document.querySelectorAll('.monthly-client-card').forEach(card=>{
-            const ok=!q||String(card.dataset.monthlySearch||'').includes(q);
-            card.style.display=ok?'':'none';
-            if(ok)visible++;
+
+          cards.forEach(card=>{
+            // Usa tanto o índice do card quanto o próprio texto visível.
+            // Isso garante busca por nome, telefone, categoria e observações.
+            const indexed=normalizeMonthlyText(card.getAttribute('data-monthly-search')||'');
+            const visibleText=normalizeMonthlyText(card.textContent||'');
+            const ok=!q || indexed.includes(q) || visibleText.includes(q);
+
+            card.hidden=!ok;
+            if(ok){
+              card.style.removeProperty('display');
+              visible++;
+            }else{
+              card.style.setProperty('display','none','important');
+            }
           });
+
           const counter=document.querySelector('.monthly-result-count');
-          if(counter)counter.textContent=`${visible} de ${allClients.length} cliente(s) exibido(s)`;
+          if(counter)counter.textContent=`${visible} de ${cards.length} cliente(s) exibido(s)`;
+
+          const list=document.querySelector('.monthly-client-list');
+          let empty=list?.querySelector('.monthly-search-empty');
+          if(visible===0 && cards.length){
+            if(!empty){
+              empty=document.createElement('div');
+              empty.className='empty-state monthly-search-empty';
+              empty.textContent='Nenhum cliente encontrado com esse nome.';
+              list?.appendChild(empty);
+            }
+            empty.style.display='';
+          }else if(empty){
+            empty.style.display='none';
+          }
         };
+
         if(searchEl){
-          searchEl.oninput=applyMonthlySearch;
-          searchEl.onsearch=applyMonthlySearch;
+          searchEl.addEventListener('input',applyMonthlySearch);
+          searchEl.addEventListener('search',applyMonthlySearch);
+          searchEl.addEventListener('keyup',applyMonthlySearch);
+          // Aplica imediatamente caso já exista texto salvo.
+          applyMonthlySearch();
         }
+
         $('monthlyClearSearch').onclick=()=>{
           window.__fiaMonthlySearch='';
-          if(searchEl){searchEl.value='';applyMonthlySearch();searchEl.focus();}
+          if(searchEl){
+            searchEl.value='';
+            applyMonthlySearch();
+            searchEl.focus();
+          }
         };
         $('monthlyFilter').onchange=e=>{window.__fiaMonthlyFilter=e.target.value;monthlyClientsModal(editId);};
         $('monthlySort').onchange=e=>{window.__fiaMonthlySort=e.target.value;monthlyClientsModal(editId);};
