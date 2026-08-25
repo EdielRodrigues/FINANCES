@@ -777,7 +777,7 @@
           </section>
           <details class="monthly-new-client" ${editing?'open':''}><summary>${editing?'✏️ Editando cliente':'＋ Cadastrar novo cliente mensal'}</summary>
           <form id="monthlyClientForm" class="form-grid"><label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label><label>Telefone / WhatsApp<input id="monthlyClientPhone" inputmode="tel" placeholder="(00) 00000-0000" value="${esc(editing?.phone||'')}"></label><label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label><label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label><label>Observações<textarea id="monthlyClientNotes" placeholder="Informações importantes do cliente">${esc(editing?.notes||'')}</textarea></label><button class="primary">${editing?'Salvar alterações':'Adicionar cliente mensal'}</button>${editing?'<button id="monthlyCancelEdit" type="button" class="secondary">Cancelar edição</button>':''}</form></details>
-          <div class="v10-list monthly-client-list">${clients.length?clients.map(c=>{const total=calcTotal(c);const d=daysUntilClosing(c.closingDay);const dueText=d===0?'Fecha hoje':d===1?'Fecha amanhã':`Fecha em ${d} dias`;const statusClass=total>0?'has-open':'is-clear';return `<article class="monthly-client-card ${statusClass}">
+          <div class="v10-list monthly-client-list">${clients.length?clients.map(c=>{const total=calcTotal(c);const d=daysUntilClosing(c.closingDay);const dueText=d===0?'Fecha hoje':d===1?'Fecha amanhã':`Fecha em ${d} dias`;const statusClass=total>0?'has-open':'is-clear';return `<article class="monthly-client-card ${statusClass}" data-monthly-search="${esc([c.name,c.category,c.phone,c.notes].map(v=>String(v||'').toLowerCase()).join(' '))}">
               <div class="monthly-client-head">
                 <div class="monthly-client-identity"><b>${esc(c.name)}</b>${c.category?`<small>${esc(c.category)}</small>`:''}</div>
                 <span class="monthly-status-chip ${statusClass}">${total>0?'Em aberto':'Em dia'}</span>
@@ -798,8 +798,30 @@
             </article>`}).join(''):'<div class="empty-state">Nenhum cliente encontrado com esses filtros.</div>'}</div>`);
         const rerender=()=>monthlyClientsModal(editId);
         const searchEl=$('monthlySearch');
-        if(searchEl){let timer;searchEl.oninput=()=>{clearTimeout(timer);window.__fiaMonthlySearch=searchEl.value;timer=setTimeout(()=>monthlyClientsModal(editId),180);};}
-        $('monthlyClearSearch').onclick=()=>{window.__fiaMonthlySearch='';window.__fiaMonthlyFilter='all';window.__fiaMonthlySort='name';monthlyClientsModal(editId);};
+
+        // V10.1.9 — pesquisa local sem recriar o modal.
+        // Mantém o foco e o teclado aberto enquanto o usuário digita.
+        const applyMonthlySearch=()=>{
+          if(!searchEl)return;
+          const q=searchEl.value.trim().toLowerCase();
+          window.__fiaMonthlySearch=searchEl.value;
+          let visible=0;
+          document.querySelectorAll('.monthly-client-card').forEach(card=>{
+            const ok=!q||String(card.dataset.monthlySearch||'').includes(q);
+            card.style.display=ok?'':'none';
+            if(ok)visible++;
+          });
+          const counter=document.querySelector('.monthly-result-count');
+          if(counter)counter.textContent=`${visible} de ${allClients.length} cliente(s) exibido(s)`;
+        };
+        if(searchEl){
+          searchEl.oninput=applyMonthlySearch;
+          searchEl.onsearch=applyMonthlySearch;
+        }
+        $('monthlyClearSearch').onclick=()=>{
+          window.__fiaMonthlySearch='';
+          if(searchEl){searchEl.value='';applyMonthlySearch();searchEl.focus();}
+        };
         $('monthlyFilter').onchange=e=>{window.__fiaMonthlyFilter=e.target.value;monthlyClientsModal(editId);};
         $('monthlySort').onchange=e=>{window.__fiaMonthlySort=e.target.value;monthlyClientsModal(editId);};
         $('monthlyClientForm').onsubmit=async e=>{e.preventDefault();const data={name:$('monthlyClientName').value.trim(),phone:$('monthlyClientPhone').value.trim(),closingDay:Number($('monthlyClientDay').value),category:$('monthlyClientCategory').value.trim()||'Serviços',notes:$('monthlyClientNotes').value.trim(),entries:editing?.entries||[],settlements:editing?.settlements||[],status:'active'};if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);monthlyClientsModal();toast('Cliente mensal salvo.');};

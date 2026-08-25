@@ -762,3 +762,36 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
   border:1px solid rgba(49,215,164,.26);
   color:var(--primary);font-size:9px;font-weight:800;
 }
+
+
+/* V10.1.9 — Agenda mais avançada + pesquisa mensal estável */
+.booking-cancel-button{
+  border:1px solid rgba(255,176,32,.38)!important;
+  background:rgba(255,176,32,.10)!important;
+  color:#ffd16a!important;
+}
+.booking-delete-button{
+  background:linear-gradient(135deg,#ff4b67,#e72f4d)!important;
+  color:#fff!important;
+  font-weight:800!important;
+}
+.fia-booking-record.st-cancelled{
+  opacity:.72;
+  border-style:dashed;
+}
+.fia-booking-status.st-cancelled{
+  background:rgba(148,163,184,.12)!important;
+  color:#cbd5e1!important;
+}
+.monthly-search-row input:focus{
+  border-color:var(--primary)!important;
+  box-shadow:0 0 0 3px rgba(49,215,164,.10)!important;
+}
+@media(max-width:520px){
+  .fia-booking-record-actions{
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+  }
+  .booking-delete-button{
+    grid-column:1/-1;
+  }
+}
