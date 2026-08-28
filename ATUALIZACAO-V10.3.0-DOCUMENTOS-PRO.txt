@@ -1,0 +1,12 @@
+Finance IA Pro v10.3.0
+Central de Documentos Pro:
+- indicadores de documentos, anexos e documentos do mês
+- pesquisa instantânea
+- filtro por tipo
+- criação e edição
+- anexo de PDF, imagem e outros arquivos até 4 MB no cache/sincronização de dados
+- abrir arquivo
+- compartilhar arquivo pelo compartilhamento nativo/WhatsApp quando suportado
+- excluir
+- atualização imediata da lista sem sair da tela
+- Firebase principal + cache local mantidos

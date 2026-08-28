@@ -305,8 +305,313 @@
   const investmentsModal=()=>genericModal('Investimentos','investments',[{key:'name',label:'Investimento'},{key:'value',label:'Valor atual',type:'number',step:'0.01'}]);
   const debtsModal=()=>genericModal('Dívidas e empréstimos','debts',[{key:'name',label:'Descrição'},{key:'value',label:'Saldo devedor',type:'number',step:'0.01'},{key:'date',label:'Próximo vencimento',type:'date'}]);
   const assetsModal=()=>genericModal('Bens e patrimônio','assets',[{key:'name',label:'Bem ou conta'},{key:'value',label:'Valor estimado',type:'number',step:'0.01'}]);
-  function alertsModal(){const bills=(state.bills||[]).filter(x=>x.userId===state.user.id&&x.status!=='paid'&&x.status!=='received').sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));openModal(`<h2>Central de alertas</h2><div class="advanced-list">${bills.length?bills.map(x=>`<article class="advanced-row"><div><b>${escapeHtml(x.description)}</b><small>${new Date(x.dueDate+'T12:00:00').toLocaleDateString('pt-BR')} • ${money(x.value)}</small></div><span class="payment-status">${escapeHtml(x.status||'pending')}</span></article>`).join(''):'<div class="empty-state">Nenhum alerta financeiro.</div>'}</div>`)}
-  function simulatorModal(){openModal(`<h2>Simulador de meta</h2><form id="goalSimulator" class="form-grid"><label>Valor da meta<input id="simTarget" inputmode="decimal" required></label><label>Valor já guardado<input id="simCurrent" inputmode="decimal" value="0,00" required></label><label>Quanto pode guardar por mês<input id="simMonthly" inputmode="decimal" required></label><button class="primary">Calcular</button></form><div id="simResult"></div>`);$('goalSimulator').onsubmit=e=>{e.preventDefault();const target=parseBRMoney($('simTarget').value),current=parseBRMoney($('simCurrent').value),monthly=parseBRMoney($('simMonthly').value);if(monthly<=0)return toast('Informe um valor mensal maior que zero.');const months=Math.max(0,Math.ceil((target-current)/monthly));$('simResult').innerHTML=`<div class="ai-box"><b>Previsão</b><p>Você alcançará ${money(target)} em aproximadamente <strong>${months} mês(es)</strong>.</p></div>`}}
+  function alertsModal(){
+    const all=(state.bills||[]).filter(x=>x.userId===state.user.id);
+    const today=new Date();today.setHours(0,0,0,0);
+    const isoToday=today.toISOString().slice(0,10);
+    const alertDateBR=value=>{
+      if(!value)return '—';
+      const d=new Date(String(value)+'T12:00:00');
+      return Number.isNaN(d.getTime())?'—':d.toLocaleDateString('pt-BR');
+    };
+    const alertMoney=value=>typeof money==='function'?money(Number(value||0)):Number(value||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+    const clientName=x=>String(x.clientName||x.client||x.customerName||x.customer||x.description||'Cliente').trim();
+
+    const info=x=>{
+      const due=new Date(String(x.dueDate||'')+'T12:00:00');
+      const valid=!Number.isNaN(due.getTime());
+      const days=valid?Math.ceil((due-today)/86400000):9999;
+      const settled=['paid','received'].includes(x.status);
+      let level='future',label='Próxima';
+      if(settled){level='settled';label=x.status==='paid'?'Paga':'Recebida'}
+      else if(days<0){level='overdue';label=`Vencida há ${Math.abs(days)} dia(s)`}
+      else if(days===0){level='today';label='Vence hoje'}
+      else if(days<=3){level='urgent';label=`Vence em ${days} dia(s)`}
+      else if(days<=7){level='soon';label=`Vence em ${days} dias`}
+      return {...x,_days:days,_level:level,_label:label};
+    };
+
+    const enriched=all.map(info);
+    const open=enriched.filter(x=>!['paid','received'].includes(x.status));
+    const overdue=open.filter(x=>x._days<0);
+    const dueToday=open.filter(x=>x._days===0);
+    const next7=open.filter(x=>x._days>0&&x._days<=7);
+    const openTotal=open.reduce((s,x)=>s+Number(x.value||0),0);
+
+    openModal(`
+      <div class="alerts-pro-head">
+        <small>CENTRAL INTELIGENTE</small>
+        <h2>⚠ Central de alertas Pro</h2>
+        <p>Acompanhe contas vencidas, vencimentos próximos e faça a baixa sem sair desta tela.</p>
+      </div>
+
+      <div class="alerts-pro-stats">
+        <article class="danger"><span>Vencidas</span><strong>${overdue.length}</strong><small>${money(overdue.reduce((s,x)=>s+Number(x.value||0),0))}</small></article>
+        <article class="today"><span>Vencem hoje</span><strong>${dueToday.length}</strong><small>${money(dueToday.reduce((s,x)=>s+Number(x.value||0),0))}</small></article>
+        <article><span>Próx. 7 dias</span><strong>${next7.length}</strong><small>${money(next7.reduce((s,x)=>s+Number(x.value||0),0))}</small></article>
+        <article><span>Total em aberto</span><strong>${open.length}</strong><small>${money(openTotal)}</small></article>
+      </div>
+
+      <div class="alerts-pro-tools">
+        <input id="alertsSearch" type="search" autocomplete="off" placeholder="🔎 Buscar descrição, categoria ou valor">
+        <select id="alertsFilter">
+          <option value="open">Em aberto</option>
+          <option value="overdue">Vencidas</option>
+          <option value="today">Hoje</option>
+          <option value="7days">Próximos 7 dias</option>
+          <option value="payable">A pagar</option>
+          <option value="receivable">A receber</option>
+          <option value="all">Todos</option>
+        </select>
+        <select id="alertsSort">
+          <option value="date">Vencimento</option>
+          <option value="value-desc">Maior valor</option>
+          <option value="value-asc">Menor valor</option>
+        </select>
+      </div>
+
+      <div id="alertsProSummary" class="alerts-pro-summary"></div>
+      <div class="alerts-client-list-title">
+        <div><b>👥 Lista de clientes / contas</b><small>Toque ou pesquise pelo nome para localizar rapidamente.</small></div>
+        <span id="alertsClientCount">0</span>
+      </div>
+      <div id="alertsProList" class="alerts-pro-list"></div>
+    `);
+
+    const renderAlerts=()=>{
+      const q=String($('alertsSearch').value||'').trim().toLowerCase();
+      const filter=$('alertsFilter').value;
+      const sort=$('alertsSort').value;
+
+      let list=enriched.filter(x=>{
+        const hay=`${clientName(x)} ${x.description||''} ${x.clientName||''} ${x.client||''} ${x.customerName||''} ${x.customer||''} ${x.category||''} ${x.value||''} ${x.notes||''}`.toLowerCase();
+        if(q&&!hay.includes(q))return false;
+        if(filter==='open')return !['paid','received'].includes(x.status);
+        if(filter==='overdue')return !['paid','received'].includes(x.status)&&x._days<0;
+        if(filter==='today')return !['paid','received'].includes(x.status)&&x._days===0;
+        if(filter==='7days')return !['paid','received'].includes(x.status)&&x._days>=0&&x._days<=7;
+        if(filter==='payable')return x.kind==='payable'&&!['paid','received'].includes(x.status);
+        if(filter==='receivable')return x.kind==='receivable'&&!['paid','received'].includes(x.status);
+        return true;
+      });
+
+      list.sort((a,b)=>{
+        if(sort==='value-desc')return Number(b.value||0)-Number(a.value||0);
+        if(sort==='value-asc')return Number(a.value||0)-Number(b.value||0);
+        return String(a.dueDate||'').localeCompare(String(b.dueDate||''));
+      });
+
+      $('alertsProSummary').innerHTML=`<span>${list.length} alerta(s)</span><strong>${alertMoney(list.filter(x=>!['paid','received'].includes(x.status)).reduce((s,x)=>s+Number(x.value||0),0))}</strong>`;
+      if($('alertsClientCount'))$('alertsClientCount').textContent=String(list.length);
+
+      $('alertsProList').innerHTML=list.length?list.map(x=>`
+        <article class="alert-pro-card ${x._level}">
+          <div class="alert-pro-top">
+            <div class="alert-pro-icon">${x.kind==='payable'?'↘':'↗'}</div>
+            <div class="alert-pro-main">
+              <div class="alert-pro-title">
+                <b>${escapeHtml(clientName(x))}</b>
+                <span class="alert-pro-badge ${x._level}">${escapeHtml(x._label)}</span>
+              </div>
+              <small>${x.kind==='payable'?'Conta a pagar':'Conta a receber'}${x.category?' • '+escapeHtml(x.category):''}</small>
+              <div class="alert-pro-values">
+                <strong>${alertMoney(x.value)}</strong>
+                <span>📅 ${alertDateBR(x.dueDate)}</span>
+              </div>
+              ${x.notes?`<p>📝 ${escapeHtml(x.notes)}</p>`:''}
+            </div>
+          </div>
+          <div class="alert-pro-actions">
+            <button class="secondary" data-alert-open="${x.id}">Abrir</button>
+            ${!['paid','received'].includes(x.status)?`<button class="primary" data-alert-settle="${x.id}">${x.kind==='payable'?'✓ Pagar':'✓ Receber'}</button>`:''}
+            <button class="secondary" data-alert-edit="${x.id}">Editar</button>
+            <button class="danger-button" data-alert-delete="${x.id}">Excluir</button>
+          </div>
+        </article>`).join(''):'<div class="empty-state">Nenhum alerta encontrado com esse filtro.</div>';
+
+      document.querySelectorAll('[data-alert-open]').forEach(b=>b.onclick=()=>{
+        const x=state.bills.find(i=>i.id===b.dataset.alertOpen);if(!x)return;
+        openModal(`<h2>${escapeHtml(clientName(x))}</h2>
+          <div class="detail-grid">
+            <p><b>Tipo</b><br>${x.kind==='payable'?'Conta a pagar':'Conta a receber'}</p>
+            <p><b>Valor</b><br>${alertMoney(x.value)}</p>
+            <p><b>Vencimento</b><br>${alertDateBR(x.dueDate)}</p>
+            <p><b>Status</b><br>${escapeHtml(x.status||'pending')}</p>
+          </div>
+          ${x.notes?`<div class="ai-box"><b>Observações</b><p>${escapeHtml(x.notes)}</p></div>`:''}
+          <button id="alertBackList" class="secondary">← Voltar para a lista</button>`);
+        $('alertBackList').onclick=alertsModal;
+      });
+
+      document.querySelectorAll('[data-alert-edit]').forEach(b=>b.onclick=()=>{
+        const x=state.bills.find(i=>i.id===b.dataset.alertEdit);if(!x)return;
+        openModal(`<h2>Editar ${escapeHtml(clientName(x))}</h2>
+          <form id="alertQuickEdit" class="form-grid">
+            <label>Nome / descrição<input id="aqeName" value="${escapeHtml(x.description||'')}" required></label>
+            <label>Valor<input id="aqeValue" inputmode="decimal" value="${Number(x.value||0).toFixed(2).replace('.',',')}" required></label>
+            <label>Vencimento<input id="aqeDate" type="date" value="${x.dueDate||''}" required></label>
+            <label>Categoria<input id="aqeCategory" value="${escapeHtml(x.category||'')}"></label>
+            <label>Observações<textarea id="aqeNotes">${escapeHtml(x.notes||'')}</textarea></label>
+            <button class="primary">Salvar alterações</button>
+            <button id="aqeCancel" class="secondary" type="button">Cancelar</button>
+          </form>`);
+        if(typeof enableLiveMoneyMask==='function')enableLiveMoneyMask($('aqeValue'));
+        $('aqeCancel').onclick=alertsModal;
+        $('alertQuickEdit').onsubmit=async e=>{
+          e.preventDefault();
+          const value=typeof moneyInputValue==='function'?(moneyInputValue($('aqeValue'))||0):(Number(String($('aqeValue').value).replace(',','.'))||0);
+          x.description=$('aqeName').value.trim();
+          x.value=value;x.dueDate=$('aqeDate').value;x.category=$('aqeCategory').value.trim();x.notes=$('aqeNotes').value.trim();x.updatedAt=Date.now();
+          save();persist();
+          if(cloudReady){const{id,userId,...data}=x;await cloudDb.ref(`finance/${state.user.id}/bills/${id}`).set(data)}
+          render();alertsModal();toast('Conta atualizada.');
+        };
+      });
+
+      document.querySelectorAll('[data-alert-settle]').forEach(b=>b.onclick=async()=>{
+        const x=state.bills.find(i=>i.id===b.dataset.alertSettle);if(!x)return;
+        const settled=x.kind==='payable'?'paid':'received';
+        const tx={id:crypto.randomUUID(),userId:state.user.id,type:x.kind==='payable'?'expense':'income',description:x.description,value:x.value,category:x.category,date:isoToday,createdAt:Date.now(),sourceBillId:x.id};
+        state.transactions.push(tx);
+        x.status=settled;x.updatedAt=Date.now();x.lastSettledAt=Date.now();
+        save();persist();
+        if(cloudReady){
+          await cloudDb.ref(`finance/${state.user.id}/bills/${x.id}`).update({status:settled,updatedAt:x.updatedAt,lastSettledAt:x.lastSettledAt});
+          const{id,userId,...data}=tx;await cloudDb.ref(`finance/${state.user.id}/transactions/${id}`).set(data);
+        }
+        render();alertsModal();toast(x.kind==='payable'?'Conta marcada como paga.':'Conta marcada como recebida.');
+      });
+
+      document.querySelectorAll('[data-alert-delete]').forEach(b=>b.onclick=async()=>{
+        const x=state.bills.find(i=>i.id===b.dataset.alertDelete);if(!x)return;
+        if(!confirm(`Excluir o alerta/conta "${clientName(x)}"?`))return;
+        state.bills=state.bills.filter(i=>i.id!==x.id);
+        save();persist();
+        if(cloudReady)await cloudDb.ref(`finance/${state.user.id}/bills/${x.id}`).remove();
+        render();alertsModal();toast('Conta excluída.');
+      });
+    };
+
+    $('alertsSearch').oninput=renderAlerts;
+    $('alertsFilter').onchange=renderAlerts;
+    $('alertsSort').onchange=renderAlerts;
+    renderAlerts();
+  }
+  function simulatorModal(){
+    openModal(`
+      <div class="sim-pro-head">
+        <small>PLANEJAMENTO INTELIGENTE</small>
+        <h2>∑ Simulador de meta Pro</h2>
+        <p>Descubra quanto guardar, quando alcançará a meta e compare cenários.</p>
+      </div>
+
+      <form id="goalSimulator" class="form-grid sim-pro-form">
+        <label>Nome da meta<input id="simName" placeholder="Ex.: Viagem, carro, reserva"></label>
+        <label>Valor da meta<input id="simTarget" inputmode="decimal" required placeholder="0,00"></label>
+        <label>Valor já guardado<input id="simCurrent" inputmode="decimal" value="0,00" required></label>
+        <label>Quanto pode guardar por mês<input id="simMonthly" inputmode="decimal" required placeholder="0,00"></label>
+        <label>Data desejada <small>(opcional)</small><input id="simDeadline" type="date"></label>
+        <label>Rendimento anual estimado <small>(opcional)</small><input id="simRate" inputmode="decimal" placeholder="0,00"></label>
+        <button class="primary sim-calc-btn" type="submit">Calcular planejamento</button>
+      </form>
+      <div id="simResult"></div>
+    `);
+
+    ['simTarget','simCurrent','simMonthly'].forEach(id=>{
+      const el=$(id);
+      if(el && typeof enableLiveMoneyMask==='function') enableLiveMoneyMask(el);
+    });
+
+    const parseInputMoney=id=>{
+      const el=$(id);
+      if(typeof moneyInputValue==='function'){
+        const v=moneyInputValue(el);
+        if(Number.isFinite(v)) return v;
+      }
+      return parseBRMoney(el?.value||'0')||0;
+    };
+    const addMonths=(date,months)=>{const d=new Date(date);d.setMonth(d.getMonth()+months);return d};
+    const monthDiff=(from,to)=>to<=from?0:Math.max(1,(to.getFullYear()-from.getFullYear())*12+to.getMonth()-from.getMonth()+(to.getDate()>from.getDate()?1:0));
+    const futureValueMonths=(current,monthly,annualRate,months)=>{const r=(annualRate/100)/12;if(!r)return current+monthly*months;return current*Math.pow(1+r,months)+monthly*((Math.pow(1+r,months)-1)/r)};
+    const monthsToGoal=(target,current,monthly,annualRate)=>{if(current>=target)return 0;if(monthly<=0)return Infinity;let value=current;const r=(annualRate/100)/12;for(let m=1;m<=1200;m++){value=value*(1+r)+monthly;if(value>=target)return m}return Infinity};
+    const monthlyNeededForDeadline=(target,current,annualRate,months)=>{if(months<=0)return Math.max(0,target-current);const r=(annualRate/100)/12;if(!r)return Math.max(0,(target-current)/months);const futureCurrent=current*Math.pow(1+r,months);return Math.max(0,(target-futureCurrent)*r/(Math.pow(1+r,months)-1))};
+
+    $('goalSimulator').onsubmit=e=>{
+      e.preventDefault();
+      const name=$('simName').value.trim()||'Minha meta';
+      const target=parseInputMoney('simTarget'),current=parseInputMoney('simCurrent'),monthly=parseInputMoney('simMonthly');
+      const annualRate=Math.max(0,Number(String($('simRate').value||'0').replace(',','.'))||0);
+      const deadlineValue=$('simDeadline').value,now=new Date(),remaining=Math.max(0,target-current);
+
+      if(!Number.isFinite(target)||target<=0)return toast('Informe um valor válido para a meta.');
+      if(!Number.isFinite(current)||current<0)return toast('Informe um valor guardado válido.');
+      if(current>target)return toast('O valor guardado já é maior que a meta.');
+      if(!Number.isFinite(monthly)||monthly<=0)return toast('Informe um valor mensal maior que zero.');
+
+      const months=monthsToGoal(target,current,monthly,annualRate);
+      const finish=Number.isFinite(months)?addMonths(now,months):null;
+      const progress=target>0?Math.min(100,(current/target)*100):0;
+      const weekly=monthly*12/52,daily=monthly*12/365;
+      const p3=futureValueMonths(current,monthly,annualRate,3),p6=futureValueMonths(current,monthly,annualRate,6),p12=futureValueMonths(current,monthly,annualRate,12);
+
+      let deadlineHtml='';
+      if(deadlineValue){
+        const deadline=new Date(`${deadlineValue}T12:00:00`);
+        const deadlineMonths=monthDiff(now,deadline);
+        const needed=monthlyNeededForDeadline(target,current,annualRate,deadlineMonths);
+        const diff=needed-monthly,achievable=needed<=monthly+0.01;
+        deadlineHtml=`<div class="sim-deadline-card ${achievable?'good':'attention'}"><span>Meta até ${deadline.toLocaleDateString('pt-BR')}</span><strong>${money(needed)}/mês</strong><small>${achievable?`Seu valor atual é suficiente. Margem aproximada: ${money(Math.max(0,-diff))}/mês.`:`Para chegar nessa data, aumente cerca de ${money(diff)}/mês.`}</small></div>`;
+      }
+
+      const scenario=factor=>{const value=monthly*factor,m=monthsToGoal(target,current,value,annualRate);return{value,m,date:Number.isFinite(m)?addMonths(now,m):null}};
+      const conservative=scenario(.8),normal=scenario(1),accelerated=scenario(1.2);
+
+      $('simResult').innerHTML=`
+        <section class="sim-pro-result">
+          <div class="sim-progress-card"><div class="sim-progress-top"><div><span>${escapeHtml(name)}</span><strong>${progress.toFixed(1).replace('.',',')}%</strong></div><small>${money(current)} de ${money(target)}</small></div><div class="sim-progress-track"><i style="width:${progress}%"></i></div></div>
+          <div class="sim-stat-grid">
+            <article><span>Falta guardar</span><strong>${money(remaining)}</strong></article>
+            <article><span>Tempo estimado</span><strong>${Number.isFinite(months)?`${months} mês(es)`:'—'}</strong></article>
+            <article><span>Conclusão prevista</span><strong>${finish?finish.toLocaleDateString('pt-BR',{month:'short',year:'numeric'}):'—'}</strong></article>
+            <article><span>Rendimento usado</span><strong>${annualRate.toFixed(2).replace('.',',')}% a.a.</strong></article>
+          </div>
+          ${deadlineHtml}
+          <div class="sim-section-title"><b>Distribuição do esforço</b><span>equivalência aproximada</span></div>
+          <div class="sim-stat-grid"><article><span>Por mês</span><strong>${money(monthly)}</strong></article><article><span>Por semana</span><strong>${money(weekly)}</strong></article><article><span>Por dia</span><strong>${money(daily)}</strong></article><article><span>Em 12 meses</span><strong>${money(p12)}</strong></article></div>
+          <div class="sim-section-title"><b>Projeção</b><span>saldo estimado</span></div>
+          <div class="sim-projection"><div><span>3 meses</span><strong>${money(p3)}</strong></div><div><span>6 meses</span><strong>${money(p6)}</strong></div><div><span>12 meses</span><strong>${money(p12)}</strong></div></div>
+          <div class="sim-section-title"><b>Cenários</b><span>compare ritmos de economia</span></div>
+          <div class="sim-scenarios">
+            <article><span>Conservador • 80%</span><strong>${money(conservative.value)}/mês</strong><small>${conservative.m} mês(es) • ${conservative.date?conservative.date.toLocaleDateString('pt-BR',{month:'short',year:'numeric'}):'—'}</small></article>
+            <article class="selected"><span>Planejado • 100%</span><strong>${money(normal.value)}/mês</strong><small>${normal.m} mês(es) • ${normal.date?normal.date.toLocaleDateString('pt-BR',{month:'short',year:'numeric'}):'—'}</small></article>
+            <article><span>Acelerado • 120%</span><strong>${money(accelerated.value)}/mês</strong><small>${accelerated.m} mês(es) • ${accelerated.date?accelerated.date.toLocaleDateString('pt-BR',{month:'short',year:'numeric'}):'—'}</small></article>
+          </div>
+          <div class="sim-result-actions">
+            <button id="simCreateGoal" class="primary" type="button">🎯 Criar meta com estes valores</button>
+            <button id="simRecalculate" class="secondary" type="button">↻ Alterar simulação</button>
+          </div>
+        </section>`;
+
+      $('simCreateGoal').onclick=()=>{
+        state.goals.push({
+          id:crypto.randomUUID(),
+          userId:state.user.id,
+          name,target,current,
+          createdAt:Date.now(),
+          monthlyPlan:monthly,
+          targetDate:deadlineValue||null,
+          estimatedAnnualRate:annualRate
+        });
+        persist();
+        render();
+        toast('Meta criada e salva no Firebase + cache local.');
+      };
+      $('simRecalculate').onclick=()=>{
+        $('simTarget').focus();
+        document.querySelector('.sim-pro-form')?.scrollIntoView({behavior:'smooth',block:'start'});
+      };
+    };
+  }
   function exportModal(){openModal(`<h2>Exportação avançada</h2><div class="profile-list"><button id="exportAllFinance" class="profile-option"><span>⇩</span><div><b>Exportar todos os dados</b><small>JSON completo da conta</small></div><i>›</i></button><button id="printFinanceReport" class="profile-option"><span>▥</span><div><b>Relatório para PDF</b><small>Abre a impressão do navegador</small></div><i>›</i></button></div>`);$('exportAllFinance').onclick=()=>{const data={exportedAt:new Date().toISOString(),transactions:userTx(),goals:userGoals(),bills:mine(state.bills),cards:mine(state.cards),installments:mine(state.installments),budgets:mine(state.budgets),recurring:mine(state.recurring),investments:mine(state.investments),debts:mine(state.debts),assets:mine(state.assets)};downloadText('finance-ia-pro-dados-'+todayISO()+'.json',JSON.stringify(data,null,2),'application/json')};$('printFinanceReport').onclick=()=>window.print()}
   const observer=new MutationObserver(install);observer.observe(document.documentElement,{childList:true,subtree:true});setTimeout(install,100);
 })();
