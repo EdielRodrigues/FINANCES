@@ -758,14 +758,167 @@
 
       function monthlyClientsModal(editId = null) {
         const editing=editId?(state.monthlyClients||[]).find(x=>x.id===editId):null;
-        const clients=mine(state.monthlyClients);
-        openModal(`<h2>Clientes com acerto mensal</h2><p class="muted">Cadastre clientes que usam o serviço durante o mês e pagam tudo de uma vez no fechamento.</p>
-          <form id="monthlyClientForm" class="form-grid"><label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label><label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label><label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label><button class="primary">${editing?'Salvar cliente':'Adicionar cliente mensal'}</button></form>
-          <div class="v10-list">${clients.length?clients.map(c=>{const total=(c.entries||[]).reduce((sum,e)=>sum+Number(e.value||0),0);return `<article class="v10-row"><div><b>${esc(c.name)}</b><small>${(c.entries||[]).length} lançamento(s) • Total aberto ${moneyText(total)} • fecha dia ${c.closingDay||30}</small></div><div class="v10-row-actions"><button class="primary monthly-open" data-id="${c.id}">Abrir</button><button class="secondary monthly-edit" data-id="${c.id}">Editar</button><button class="danger-button monthly-delete" data-id="${c.id}">Excluir</button></div></article>`}).join(''):'<div class="empty-state">Nenhum cliente mensal cadastrado.</div>'}</div>`);
-        $('monthlyClientForm').onsubmit=async e=>{e.preventDefault();const data={name:$('monthlyClientName').value.trim(),closingDay:Number($('monthlyClientDay').value),category:$('monthlyClientCategory').value.trim()||'Serviços',entries:editing?.entries||[],settlements:editing?.settlements||[],status:'active'};if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);monthlyClientsModal();toast('Cliente mensal salvo.');};
-        document.querySelectorAll('.monthly-open').forEach(b=>b.onclick=()=>monthlyClientDetails(b.dataset.id));
-        document.querySelectorAll('.monthly-edit').forEach(b=>b.onclick=()=>monthlyClientsModal(b.dataset.id));
-        document.querySelectorAll('.monthly-delete').forEach(b=>b.onclick=async()=>{if(!confirm('Excluir este cliente mensal e seus lançamentos abertos?'))return;await deleteItem('monthlyClients',b.dataset.id);monthlyClientsModal();});
+        const allClients=mine(state.monthlyClients);
+
+        const monthlyInfo=c=>{
+          const entries=Array.isArray(c.entries)?c.entries:[];
+          const total=entries.reduce((sum,e)=>sum+Number(e.value||0),0);
+          const now=new Date(); now.setHours(0,0,0,0);
+          const closeDay=Math.min(31,Math.max(1,Number(c.closingDay||30)));
+          let closeDate=new Date(now.getFullYear(),now.getMonth(),Math.min(closeDay,new Date(now.getFullYear(),now.getMonth()+1,0).getDate()),12);
+          if(c.nextClosingDate){
+            const d=new Date(`${c.nextClosingDate}T12:00:00`);
+            if(!Number.isNaN(d.getTime())) closeDate=d;
+          }
+          const days=Math.ceil((closeDate-now)/86400000);
+          let status='ok',label='Em dia';
+          if(total>0 && days<0){status='overdue';label='Vencido';}
+          else if(total>0){status='open';label='Em aberto';}
+          return {entries,total,days,closeDate,status,label};
+        };
+
+        const infos=allClients.map(c=>({client:c,...monthlyInfo(c)}));
+        const openCount=infos.filter(x=>x.status==='open'||x.status==='overdue').length;
+        const okCount=infos.filter(x=>x.status==='ok').length;
+        const overdueCount=infos.filter(x=>x.status==='overdue').length;
+        const totalOpen=infos.reduce((s,x)=>s+x.total,0);
+
+        openModal(`<div class="monthly-pro-shell">
+          <div class="monthly-pro-head">
+            <small>COBRANÇA MENSAL</small>
+            <h2>📆 Clientes com acerto mensal</h2>
+            <p class="muted">Clientes que acumulam serviços durante o mês e pagam tudo no fechamento.</p>
+          </div>
+
+          <div class="monthly-pro-stats">
+            <article><span>Clientes</span><strong>${allClients.length}</strong></article>
+            <article class="open"><span>Em aberto</span><strong>${openCount}</strong></article>
+            <article class="ok"><span>Em dia</span><strong>${okCount}</strong></article>
+            <article class="overdue"><span>Vencidos</span><strong>${overdueCount}</strong></article>
+          </div>
+          <div class="monthly-pro-total"><span>Total a receber</span><strong>${moneyText(totalOpen)}</strong></div>
+
+          <div class="monthly-pro-tools">
+            <input id="monthlySearch" type="search" autocomplete="off" placeholder="🔎 Pesquisar cliente, categoria ou telefone">
+            <select id="monthlyFilter">
+              <option value="all">Todos</option>
+              <option value="open">Em aberto</option>
+              <option value="ok">Em dia</option>
+              <option value="overdue">Vencidos</option>
+            </select>
+            <select id="monthlySort">
+              <option value="name">Nome A–Z</option>
+              <option value="value">Maior valor</option>
+              <option value="closing">Fechamento mais próximo</option>
+            </select>
+          </div>
+
+          <details class="monthly-pro-new" ${editing?'open':''}>
+            <summary>${editing?'✏️ Editar cliente mensal':'＋ Cadastrar novo cliente mensal'}</summary>
+            <form id="monthlyClientForm" class="form-grid">
+              <label>Nome do cliente<input id="monthlyClientName" required value="${esc(editing?.name||'')}"></label>
+              <label>Telefone / WhatsApp<input id="monthlyClientPhone" inputmode="tel" value="${esc(editing?.phone||'')}"></label>
+              <label>Dia do fechamento<input id="monthlyClientDay" type="number" min="1" max="31" required value="${editing?.closingDay||30}"></label>
+              <label>Categoria<input id="monthlyClientCategory" value="${esc(editing?.category||'Serviços')}"></label>
+              <label>Observações<textarea id="monthlyClientNotes">${esc(editing?.notes||'')}</textarea></label>
+              <button class="primary">${editing?'Salvar cliente':'Adicionar cliente mensal'}</button>
+              ${editing?'<button id="monthlyCancelEdit" type="button" class="secondary">Cancelar edição</button>':''}
+            </form>
+          </details>
+
+          <div class="monthly-pro-list-head">
+            <div><b>Lista de clientes</b><small id="monthlyResultText">${allClients.length} cliente(s)</small></div>
+            <span id="monthlyResultCount">${allClients.length}</span>
+          </div>
+          <div id="monthlyClientsList" class="monthly-pro-list"></div>
+        </div>`);
+
+        const normalize=v=>String(v||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim();
+
+        const renderMonthlyList=()=>{
+          const q=normalize($('monthlySearch')?.value);
+          const filter=$('monthlyFilter')?.value||'all';
+          const sort=$('monthlySort')?.value||'name';
+
+          let list=infos.filter(({client, status})=>{
+            const hay=normalize(`${client.name||''} ${client.phone||''} ${client.category||''} ${client.notes||''}`);
+            return (!q||hay.includes(q)) && (filter==='all'||status===filter);
+          });
+
+          list.sort((a,b)=>{
+            if(sort==='value') return b.total-a.total;
+            if(sort==='closing') return a.closeDate-b.closeDate;
+            return String(a.client.name||'').localeCompare(String(b.client.name||''),'pt-BR');
+          });
+
+          $('monthlyResultCount').textContent=String(list.length);
+          $('monthlyResultText').textContent=`${list.length} de ${allClients.length} cliente(s)`;
+
+          $('monthlyClientsList').innerHTML=list.length?list.map(({client:c,total,entries,days,status,label,closeDate})=>`
+            <article class="monthly-pro-card ${status}">
+              <div class="monthly-pro-card-top">
+                <div class="monthly-avatar">${esc(String(c.name||'?').charAt(0).toUpperCase())}</div>
+                <div class="monthly-pro-main">
+                  <div class="monthly-pro-title"><b>${esc(c.name||'Sem nome')}</b><span class="monthly-status ${status}">${label}</span></div>
+                  <small>${esc(c.phone||'Sem telefone')}${c.category?' • '+esc(c.category):''}</small>
+                  <small>${entries.length} lançamento(s) • fecha dia ${c.closingDay||30}</small>
+                </div>
+              </div>
+              <div class="monthly-pro-values">
+                <div><span>Total aberto</span><strong>${moneyText(total)}</strong></div>
+                <div><span>Próximo fechamento</span><strong>${closeDate.toLocaleDateString('pt-BR')}</strong></div>
+                <div><span>Situação</span><strong>${status==='overdue'?`Atrasado ${Math.abs(days)} dia(s)`:status==='open'?(days===0?'Vence hoje':`Faltam ${Math.max(0,days)} dia(s)`):'Sem saldo aberto'}</strong></div>
+              </div>
+              ${c.notes?`<p class="monthly-pro-note">📝 ${esc(c.notes)}</p>`:''}
+              <div class="monthly-pro-actions">
+                <button class="primary monthly-open" data-id="${c.id}">Abrir conta</button>
+                ${String(c.phone||'').replace(/\D/g,'').length>=10?`<button class="secondary monthly-wa" data-id="${c.id}">WhatsApp</button>`:''}
+                <button class="secondary monthly-edit" data-id="${c.id}">Editar</button>
+                <button class="danger-button monthly-delete" data-id="${c.id}">Excluir</button>
+              </div>
+            </article>`).join(''):'<div class="empty-state">Nenhum cliente encontrado com esse filtro.</div>';
+
+          document.querySelectorAll('.monthly-open').forEach(b=>b.onclick=()=>monthlyClientDetails(b.dataset.id));
+          document.querySelectorAll('.monthly-edit').forEach(b=>b.onclick=()=>monthlyClientsModal(b.dataset.id));
+          document.querySelectorAll('.monthly-wa').forEach(b=>b.onclick=()=>{
+            const c=allClients.find(x=>x.id===b.dataset.id); if(!c)return;
+            const p=String(c.phone||'').replace(/\D/g,'');
+            const inf=monthlyInfo(c);
+            const msg=`Olá, ${c.name}! Seu acerto mensal está em ${moneyText(inf.total)}. Fechamento dia ${c.closingDay||30}.`;
+            window.open(`https://wa.me/55${p}?text=${encodeURIComponent(msg)}`,'_blank');
+          });
+          document.querySelectorAll('.monthly-delete').forEach(b=>b.onclick=async()=>{
+            const c=allClients.find(x=>x.id===b.dataset.id); if(!c)return;
+            if(!confirm(`Excluir o cliente mensal ${c.name} e os lançamentos abertos?`))return;
+            await deleteItem('monthlyClients',c.id);
+            monthlyClientsModal();
+            toast('Cliente mensal excluído.');
+          });
+        };
+
+        $('monthlySearch').oninput=renderMonthlyList;
+        $('monthlyFilter').onchange=renderMonthlyList;
+        $('monthlySort').onchange=renderMonthlyList;
+        if($('monthlyCancelEdit'))$('monthlyCancelEdit').onclick=()=>monthlyClientsModal();
+
+        $('monthlyClientForm').onsubmit=async e=>{
+          e.preventDefault();
+          const data={
+            name:$('monthlyClientName').value.trim(),
+            phone:$('monthlyClientPhone').value.trim(),
+            closingDay:Number($('monthlyClientDay').value),
+            category:$('monthlyClientCategory').value.trim()||'Serviços',
+            notes:$('monthlyClientNotes').value.trim(),
+            entries:editing?.entries||[],
+            settlements:editing?.settlements||[],
+            status:'active'
+          };
+          if(editing)await updateItem('monthlyClients',editing.id,data);else await addItem('monthlyClients',data);
+          monthlyClientsModal();
+          toast('Cliente mensal salvo.');
+        };
+
+        renderMonthlyList();
       }
       function monthlyClientDetails(clientId) {
         const client=(state.monthlyClients||[]).find(x=>x.id===clientId);if(!client)return;const entries=client.entries||[];const total=entries.reduce((s,e)=>s+Number(e.value||0),0);
