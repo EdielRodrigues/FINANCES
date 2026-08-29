@@ -793,3 +793,24 @@ textarea{width:100%;resize:vertical}button:disabled{opacity:.5;cursor:not-allowe
 @media(max-width:560px){
  .fia-booking-title h2{font-size:1.35rem}.fia-booking-day{height:66px!important}.fia-booking-calendar{gap:4px!important}.fia-booking-week{gap:4px}.fia-booking-tools{grid-template-columns:1fr}.monthly-pro-tools{grid-template-columns:1fr}.monthly-pro-stats{grid-template-columns:repeat(2,1fr)}.monthly-pro-values{grid-template-columns:1fr 1fr}.monthly-pro-values>div:last-child{grid-column:1/-1}
 }
+
+
+/* v10.3.3 — Histórico permanente de pedidos por cliente mensal/ID */
+.monthly-detail-pro{display:grid;gap:15px;padding-bottom:24px}
+.monthly-detail-head small{display:block;color:var(--primary);font-size:.68rem;font-weight:900;letter-spacing:.06em;overflow-wrap:anywhere}
+.monthly-detail-head h2{margin:4px 0}.monthly-detail-head p{margin:0;color:var(--muted);line-height:1.4}
+.monthly-detail-stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.monthly-detail-stats article{padding:12px 9px;border:1px solid var(--line);border-radius:16px;background:#091827;min-width:0}
+.monthly-detail-stats span,.monthly-detail-stats strong,.monthly-detail-stats small{display:block}
+.monthly-detail-stats span{font-size:.61rem;color:var(--muted)}.monthly-detail-stats strong{margin-top:4px;font-size:.98rem;overflow-wrap:anywhere}.monthly-detail-stats small{margin-top:3px;color:var(--muted);font-size:.62rem}
+.monthly-entry-form{padding:14px;border:1px solid var(--line);border-radius:18px;background:rgba(5,18,32,.35)}.monthly-entry-form h3{grid-column:1/-1;margin:0}
+.monthly-open-section,.monthly-history-section,.monthly-settlement-section{display:grid;gap:9px}
+.monthly-section-head{display:flex;justify-content:space-between;align-items:center;gap:10px}.monthly-section-head b,.monthly-section-head small{display:block}.monthly-section-head small{margin-top:2px;color:var(--muted);font-size:.66rem}.monthly-section-head>span{min-width:32px;height:32px;display:grid;place-items:center;border-radius:10px;background:rgba(49,215,164,.12);color:var(--primary);font-weight:900}
+.monthly-order-row{display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;padding:12px;border:1px solid var(--line);border-left:4px solid #ffb020;border-radius:15px;background:#091827}.monthly-order-row b,.monthly-order-row small{display:block}.monthly-order-row small{margin-top:3px;color:var(--muted);font-size:.68rem}.monthly-order-row button{margin:0;max-width:150px}
+.monthly-history-tools{display:grid;grid-template-columns:1fr 135px;gap:7px}.monthly-history-tools input,.monthly-history-tools select{margin:0!important}
+.monthly-history-list,.monthly-settlement-list{display:grid;gap:8px}
+.monthly-history-card,.monthly-settlement-card{padding:12px;border:1px solid var(--line);border-radius:15px;background:#091827}.monthly-history-card.open{border-left:4px solid #ffb020}.monthly-history-card.received{border-left:4px solid var(--primary)}
+.monthly-history-title{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.monthly-history-title span{padding:4px 7px;border-radius:999px;background:rgba(49,215,164,.11);color:var(--primary);font-size:.6rem;font-weight:900}.monthly-history-card.open .monthly-history-title span{background:rgba(255,176,32,.12);color:#ffd16a}
+.monthly-history-card small,.monthly-settlement-card small{display:block;margin-top:3px;color:var(--muted);font-size:.67rem}
+.monthly-settlement-card b{color:var(--primary)}
+@media(max-width:560px){.monthly-detail-stats{grid-template-columns:1fr 1fr}.monthly-detail-stats article:last-child{grid-column:1/-1}.monthly-history-tools{grid-template-columns:1fr}.monthly-order-row{grid-template-columns:1fr}.monthly-order-row button{max-width:none;width:100%}}

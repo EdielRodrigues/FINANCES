@@ -921,16 +921,255 @@
         renderMonthlyList();
       }
       function monthlyClientDetails(clientId) {
-        const client=(state.monthlyClients||[]).find(x=>x.id===clientId);if(!client)return;const entries=client.entries||[];const total=entries.reduce((s,e)=>s+Number(e.value||0),0);
-        openModal(`<h2>${esc(client.name)}</h2><div class="summary-grid"><article class="summary"><span>Lançamentos abertos</span><strong>${entries.length}</strong></article><article class="summary"><span>Total a receber</span><strong>${moneyText(total)}</strong></article></div>
-          <form id="monthlyEntryForm" class="form-grid"><label>Descrição<input id="monthlyEntryDescription" required placeholder="Ex.: Serviço da semana"></label><label>Valor<input id="monthlyEntryValue" inputmode="decimal" required></label><label>Data<input id="monthlyEntryDate" type="date" value="${todayISO()}" required></label><button class="primary">Adicionar ao mês</button></form>
-          <div class="v10-list">${entries.length?entries.map(e=>`<article class="v10-row"><div><b>${esc(e.description)}</b><small>${brDate(e.date)} • ${moneyText(e.value)}</small></div><button class="danger-button monthly-entry-delete" data-id="${e.id}">Excluir</button></article>`).join(''):'<div class="empty-state">Nenhum serviço lançado neste mês.</div>'}</div>
-          <div class="modal-actions"><button id="monthlyReceiveAll" class="primary" ${total<=0?'disabled':''}>Receber total ${moneyText(total)}</button><button id="monthlyBack" class="secondary">Voltar</button></div>`);
+        const client=(state.monthlyClients||[]).find(x=>x.id===clientId);
+        if(!client)return;
+
+        client.entries=Array.isArray(client.entries)?client.entries:[];
+        client.settlements=Array.isArray(client.settlements)?client.settlements:[];
+        client.orderHistory=Array.isArray(client.orderHistory)?client.orderHistory:[];
+
+        // Migra automaticamente os pedidos antigos para um histórico permanente por ID.
+        const historyMap=new Map();
+        client.orderHistory.forEach(h=>h?.id&&historyMap.set(String(h.id),h));
+
+        client.settlements.forEach(s=>{
+          (s.entries||[]).forEach(e=>{
+            if(!e?.id)return;
+            const key=String(e.id);
+            if(!historyMap.has(key)){
+              historyMap.set(key,{
+                ...e,
+                clientId:client.id,
+                status:'received',
+                settledAt:s.createdAt||Date.now(),
+                settlementId:s.id||null
+              });
+            }
+          });
+        });
+
+        client.entries.forEach(e=>{
+          if(!e?.id)return;
+          const key=String(e.id);
+          const previous=historyMap.get(key)||{};
+          historyMap.set(key,{
+            ...previous,
+            ...e,
+            clientId:client.id,
+            status:'open'
+          });
+        });
+
+        client.orderHistory=[...historyMap.values()]
+          .sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+
+        const entries=client.entries;
+        const total=entries.reduce((s,e)=>s+Number(e.value||0),0);
+        const receivedTotal=client.settlements.reduce((s,x)=>s+Number(x.value||0),0);
+        const allOrders=client.orderHistory.length;
+        const receivedOrders=client.orderHistory.filter(x=>x.status==='received').length;
+
+        openModal(`<div class="monthly-detail-pro">
+          <div class="monthly-detail-head">
+            <div><small>CLIENTE MENSAL • ID ${esc(client.id)}</small><h2>${esc(client.name)}</h2><p>Todos os pedidos desse ID ficam guardados aqui, inclusive depois do recebimento.</p></div>
+          </div>
+
+          <div class="monthly-detail-stats">
+            <article><span>Em aberto</span><strong>${entries.length}</strong><small>${moneyText(total)}</small></article>
+            <article><span>Pedidos no histórico</span><strong>${allOrders}</strong><small>${receivedOrders} recebido(s)</small></article>
+            <article><span>Total já recebido</span><strong>${moneyText(receivedTotal)}</strong><small>${client.settlements.length} fechamento(s)</small></article>
+          </div>
+
+          <form id="monthlyEntryForm" class="form-grid monthly-entry-form">
+            <h3>＋ Novo pedido / serviço</h3>
+            <label>Descrição<input id="monthlyEntryDescription" required placeholder="Ex.: Serviço da semana"></label>
+            <label>Valor<input id="monthlyEntryValue" inputmode="decimal" required></label>
+            <label>Data<input id="monthlyEntryDate" type="date" value="${todayISO()}" required></label>
+            <button class="primary">Adicionar ao mês</button>
+          </form>
+
+          <section class="monthly-open-section">
+            <div class="monthly-section-head"><div><b>Pedidos em aberto</b><small>Ainda entram no próximo acerto.</small></div><span>${entries.length}</span></div>
+            <div class="v10-list">${entries.length?entries.map(e=>`
+              <article class="monthly-order-row open">
+                <div>
+                  <b>${esc(e.description)}</b>
+                  <small>${brDate(e.date)} • ${moneyText(e.value)}</small>
+                  <small>ID do pedido: ${esc(e.id)}</small>
+                </div>
+                <button class="danger-button monthly-entry-delete" data-id="${e.id}">Remover do aberto</button>
+              </article>`).join(''):'<div class="empty-state">Nenhum pedido em aberto.</div>'}</div>
+          </section>
+
+          <section class="monthly-history-section">
+            <div class="monthly-section-head"><div><b>📚 Histórico completo deste ID</b><small>Pedidos continuam aqui mesmo depois de receber o total.</small></div><span>${allOrders}</span></div>
+            <div class="monthly-history-tools">
+              <input id="monthlyHistorySearch" type="search" autocomplete="off" placeholder="🔎 Pesquisar pedido">
+              <select id="monthlyHistoryFilter">
+                <option value="all">Todos</option>
+                <option value="open">Em aberto</option>
+                <option value="received">Recebidos</option>
+              </select>
+            </div>
+            <div id="monthlyHistoryList" class="monthly-history-list"></div>
+          </section>
+
+          <section class="monthly-settlement-section">
+            <div class="monthly-section-head"><div><b>💰 Fechamentos / pagamentos</b><small>Histórico dos acertos já recebidos.</small></div><span>${client.settlements.length}</span></div>
+            <div class="monthly-settlement-list">${client.settlements.length?client.settlements.map(s=>`
+              <article class="monthly-settlement-card">
+                <div><b>${moneyText(s.value)}</b><small>Recebido em ${brDate(s.date)}</small><small>${(s.entries||[]).length} pedido(s) • ID ${esc(s.id)}</small></div>
+              </article>`).join(''):'<div class="empty-state">Nenhum fechamento recebido ainda.</div>'}</div>
+          </section>
+
+          <div class="modal-actions">
+            <button id="monthlyReceiveAll" class="primary" ${total<=0?'disabled':''}>Receber total ${moneyText(total)}</button>
+            <button id="monthlyBack" class="secondary">Voltar</button>
+          </div>
+        </div>`);
+
         bindV10MoneyInputs('monthlyEntryValue');
-        $('monthlyEntryForm').onsubmit=async e=>{e.preventDefault();client.entries=client.entries||[];client.entries.push({id:id(),description:$('monthlyEntryDescription').value.trim(),value:numberValue($('monthlyEntryValue').value),date:$('monthlyEntryDate').value,createdAt:Date.now()});await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);toast('Valor adicionado ao acerto mensal.');};
-        document.querySelectorAll('.monthly-entry-delete').forEach(b=>b.onclick=async()=>{client.entries=(client.entries||[]).filter(e=>e.id!==b.dataset.id);await updateItem('monthlyClients',client.id,{entries:client.entries});monthlyClientDetails(client.id);});
+
+        const renderHistory=()=>{
+          const q=String($('monthlyHistorySearch')?.value||'').trim().toLowerCase();
+          const filter=$('monthlyHistoryFilter')?.value||'all';
+          let list=(client.orderHistory||[]).filter(x=>{
+            const hay=`${x.description||''} ${x.date||''} ${x.value||''} ${x.id||''}`.toLowerCase();
+            return (!q||hay.includes(q)) && (filter==='all'||x.status===filter);
+          }).sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+
+          $('monthlyHistoryList').innerHTML=list.length?list.map(x=>`
+            <article class="monthly-history-card ${x.status==='received'?'received':'open'}">
+              <div>
+                <div class="monthly-history-title"><b>${esc(x.description||'Pedido')}</b><span>${x.status==='received'?'Recebido':'Em aberto'}</span></div>
+                <small>${brDate(x.date)} • ${moneyText(x.value)}</small>
+                <small>ID do pedido: ${esc(x.id)}</small>
+                ${x.status==='received'&&x.settledAt?`<small>Baixa: ${new Date(x.settledAt).toLocaleDateString('pt-BR')}</small>`:''}
+              </div>
+            </article>`).join(''):'<div class="empty-state">Nenhum pedido encontrado.</div>';
+        };
+
+        $('monthlyHistorySearch').oninput=renderHistory;
+        $('monthlyHistoryFilter').onchange=renderHistory;
+
+        $('monthlyEntryForm').onsubmit=async e=>{
+          e.preventDefault();
+
+          const order={
+            id:id(),
+            clientId:client.id,
+            description:$('monthlyEntryDescription').value.trim(),
+            value:numberValue($('monthlyEntryValue').value),
+            date:$('monthlyEntryDate').value,
+            createdAt:Date.now(),
+            status:'open'
+          };
+
+          client.entries.push({...order});
+          client.orderHistory.unshift({...order});
+
+          await updateItem('monthlyClients',client.id,{
+            entries:client.entries,
+            orderHistory:client.orderHistory
+          });
+
+          monthlyClientDetails(client.id);
+          toast('Pedido salvo neste cliente e no histórico permanente.');
+        };
+
+        document.querySelectorAll('.monthly-entry-delete').forEach(b=>b.onclick=async()=>{
+          const orderId=b.dataset.id;
+          client.entries=client.entries.filter(e=>e.id!==orderId);
+
+          // Não apaga o histórico do pedido. Apenas retira do saldo em aberto.
+          client.orderHistory=client.orderHistory.map(h=>
+            h.id===orderId ? {...h,status:'removed',removedFromOpenAt:Date.now()} : h
+          );
+
+          await updateItem('monthlyClients',client.id,{
+            entries:client.entries,
+            orderHistory:client.orderHistory
+          });
+
+          monthlyClientDetails(client.id);
+          toast('Pedido removido do aberto, mas preservado no histórico.');
+        });
+
         $('monthlyBack').onclick=()=>monthlyClientsModal();
-        $('monthlyReceiveAll').onclick=async()=>{if(total<=0)return;if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;const now=Date.now();const tx={id:id(),userId:uid(),type:'income',description:`Acerto mensal - ${client.name}`,value:total,category:client.category||'Serviços',date:todayISO(),createdAt:now,sourceMonthlyClientId:client.id,sourceType:'monthlyClient',itemsCount:entries.length,status:'received'};state.transactions.push(tx);client.settlements=client.settlements||[];client.settlements.unshift({id:id(),value:total,date:todayISO(),createdAt:now,entries:[...entries]});client.entries=[];client.lastReceivedAt=now;client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);await updateItem('monthlyClients',client.id,{entries:client.entries,settlements:client.settlements,lastReceivedAt:now,nextClosingDate:client.nextClosingDate});if(typeof persist==='function')persist();if(cloudReady){const {id:txId,userId,...data}=tx;await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data)}monthlyClientDetails(client.id);if(typeof render==='function')render();toast('Acerto recebido, salvo nas receitas e lançamentos abertos limpos.');};
+
+        $('monthlyReceiveAll').onclick=async()=>{
+          if(total<=0)return;
+          if(!confirm(`Confirmar recebimento total de ${moneyText(total)} de ${client.name}?`))return;
+
+          const now=Date.now();
+          const settlementId=id();
+          const tx={
+            id:id(),
+            userId:uid(),
+            type:'income',
+            description:`Acerto mensal - ${client.name}`,
+            value:total,
+            category:client.category||'Serviços',
+            date:todayISO(),
+            createdAt:now,
+            sourceMonthlyClientId:client.id,
+            sourceType:'monthlyClient',
+            itemsCount:entries.length,
+            status:'received'
+          };
+
+          state.transactions.push(tx);
+
+          const settledEntries=entries.map(e=>({...e,status:'received',settledAt:now,settlementId}));
+          client.settlements.unshift({
+            id:settlementId,
+            value:total,
+            date:todayISO(),
+            createdAt:now,
+            entries:settledEntries
+          });
+
+          const settledIds=new Set(entries.map(e=>String(e.id)));
+          client.orderHistory=client.orderHistory.map(h=>
+            settledIds.has(String(h.id))
+              ? {...h,status:'received',settledAt:now,settlementId}
+              : h
+          );
+
+          client.entries=[];
+          client.lastReceivedAt=now;
+          client.nextClosingDate=nextMonthDate(todayISO(),client.closingDay||30);
+
+          await updateItem('monthlyClients',client.id,{
+            entries:[],
+            settlements:client.settlements,
+            orderHistory:client.orderHistory,
+            lastReceivedAt:now,
+            nextClosingDate:client.nextClosingDate
+          });
+
+          if(typeof persist==='function')persist();
+
+          if(cloudReady){
+            const {id:txId,userId,...data}=tx;
+            await cloudDb.ref(`finance/${uid()}/transactions/${txId}`).set(data);
+          }
+
+          monthlyClientDetails(client.id);
+          if(typeof render==='function')render();
+          toast('Acerto recebido. Todos os pedidos continuam salvos no histórico deste ID.');
+        };
+
+        // Salva a migração do histórico antigo uma única vez, sem apagar nada.
+        if(client.orderHistory.length && !client.historyMigratedAt){
+          client.historyMigratedAt=Date.now();
+          updateItem('monthlyClients',client.id,{
+            orderHistory:client.orderHistory,
+            historyMigratedAt:client.historyMigratedAt
+          }).catch(()=>{});
+        }
+
+        renderHistory();
       }
 
       function auditModal() {
