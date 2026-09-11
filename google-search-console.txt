@@ -1,14 +1,19 @@
-GOOGLE SEARCH CONSOLE — FINANCE IA PRO
+Finance IA Pro — Gestão Financeira
 
-1. Publique a v10.2.1 no endereço oficial do Finance IA Pro.
-2. Abra https://search.google.com/search-console
-3. Adicione a propriedade usando o endereço público do site.
-4. Faça a verificação solicitada pelo Google.
-5. Em "Inspeção de URL", informe a página inicial e clique em "Solicitar indexação".
-6. Em "Sitemaps", informe:
-   sitemap.xml
+URL principal:
+https://edielrodrigues.github.io/FINANCES/
 
-IMPORTANTE:
-O arquivo sitemap.xml precisa receber o endereço público final do site dentro de <loc>.
-O projeto não contém hoje o endereço público do FRONTEND, apenas URLs de backend.
-Por isso eu não inventei um domínio para não apontar o Google para o lugar errado.
+Sitemap:
+https://edielrodrigues.github.io/FINANCES/sitemap.xml
+
+Robots:
+https://edielrodrigues.github.io/FINANCES/robots.txt
+
+Título SEO:
+Finance IA Pro — Gestão Financeira Pessoal e Empresarial
+
+Descrição SEO:
+Finance IA Pro é uma plataforma de gestão financeira pessoal, familiar e empresarial para controlar receitas, despesas, metas, contas, cartões, clientes, recibos, agendamentos, relatórios e recursos de inteligência artificial.
+
+Imagem principal:
+https://edielrodrigues.github.io/FINANCES/icon-512.png

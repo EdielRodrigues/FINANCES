@@ -1,13 +1,21 @@
 {
-  "name": "Finance IA Pro — Gestão Financeira Inteligente",
+  "name": "Finance IA Pro — Gestão Financeira",
   "short_name": "Finance IA Pro",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#07111f",
   "theme_color": "#07111f",
-  "description": "Plataforma de gestão financeira pessoal, familiar e empresarial com IA, metas, receitas, despesas, contas, cartões, relatórios, clientes, recibos e agendamentos.",
+  "description": "Finance IA Pro — gestão financeira pessoal, familiar e empresarial com controle de receitas, despesas, metas, contas, cartões, clientes, recibos, agendamentos, relatórios e inteligência artificial.",
   "icons": [
-    {"src":"icon-192.png","sizes":"192x192","type":"image/png"},
-    {"src":"icon-512.png","sizes":"512x512","type":"image/png"}
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
   ]
 }

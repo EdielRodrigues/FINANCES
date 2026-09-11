@@ -201,7 +201,7 @@ function unlockAfterApprovedPayment(){
   const now=Date.now();
   if(now-lastAccessUnlockedAt>5000){
     lastAccessUnlockedAt=now;
-    toast('Pagamento aprovado! Acesso liberado por 30 dias.');
+    toast('Pagamento aprovado! Premium liberado por 30 dias e teste de 24h registrado.');
   }
 }
 async function refreshCurrentUserFromFirebase(){

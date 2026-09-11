@@ -29,7 +29,7 @@
     "url": pageUrl,
     "applicationCategory": "FinanceApplication",
     "operatingSystem": "Web, Android, iOS, Windows, macOS",
-    "description": "Aplicativo de controle financeiro inteligente com receitas, despesas, metas, contas, cartões, clientes, recibos, agendamentos, relatórios e recursos de IA.",
+    "description": "Plataforma de gestão financeira pessoal, familiar e empresarial com controle de receitas, despesas, metas, contas, cartões, clientes, recibos, agendamentos, relatórios e inteligência artificial.",
     "inLanguage": "pt-BR",
     "image": image,
     "isPartOf": {"@type":"WebSite","name":"Finance IA Pro","url":siteUrl}
