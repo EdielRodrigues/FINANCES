@@ -1,6 +1,7 @@
 (() => {
   'use strict';
 
+  const siteUrl = 'https://edielrodrigues.github.io/FINANCES/';
   const origin = location.origin;
   const pageUrl = origin + location.pathname;
 
@@ -31,10 +32,7 @@
     "description": "Aplicativo de controle financeiro inteligente com receitas, despesas, metas, contas, cartões, clientes, recibos, agendamentos, relatórios e recursos de IA.",
     "inLanguage": "pt-BR",
     "image": image,
-    "offers": {
-      "@type": "Offer",
-      "category": "subscription"
-    }
+    "isPartOf": {"@type":"WebSite","name":"Finance IA Pro","url":siteUrl}
   };
 
   let script = document.getElementById('financeIaProSchema');
