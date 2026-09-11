@@ -332,11 +332,57 @@
           <div class="v10-list">${monthlyRows||'<div class="empty-state">Nenhum acerto mensal em aberto.</div>'}</div>`);
       }
 
-      function walletsModal() {
-        openModal(`<h2>Carteiras e centros de controle</h2><p class="muted">Separe finanças pessoais, familiares ou empresariais.</p>
-          <form id="v10WalletForm" class="form-grid"><label>Nome da carteira<input id="v10WalletName" required placeholder="Ex.: Casa, Empresa, Família"></label><label>Responsável<input id="v10WalletOwner" required></label><label>Limite mensal<input id="v10WalletLimit" inputmode="decimal" required></label><button class="primary">Criar carteira</button></form><div class="v10-list">${listHtml('wallets')}</div>`);
-        bindV10MoneyInputs('v10WalletLimit');
-        $('v10WalletForm').onsubmit=async e=>{e.preventDefault();await addItem('wallets',{name:$('v10WalletName').value,owner:$('v10WalletOwner').value,value:numberValue($('v10WalletLimit').value)});walletsModal();}; bindDeletes(walletsModal);
+      async function familyWalletList() {
+        if (!cloudReady || !BACKEND_URL || !cloudAuth?.currentUser) return [];
+        try { const r=await apiFetch('/familyWallet/list'); return Array.isArray(r.wallets)?r.wallets:[]; }
+        catch(e){ console.warn('Carteiras compartilhadas:',e.message); return []; }
+      }
+
+      function familyWalletCard(w) {
+        const members=Object.values(w.members||{});
+        const total=Object.values(w.entries||{}).reduce((sum,e)=>sum+(e.kind==='expense'?-Number(e.value||0):Number(e.value||0)),0);
+        return `<article class="family-wallet-card">
+          <div class="family-wallet-head"><div><span class="family-wallet-badge">👨‍👩‍👧 Compartilhada</span><h3>${esc(w.name||'Família')}</h3><small>${members.length} membro(s) • código ${esc(w.inviteCode||'—')}</small></div><strong>${moneyText(total)}</strong></div>
+          <div class="family-wallet-members">${members.slice(0,5).map(m=>`<span title="${esc(m.email||'')}">${esc((m.name||m.email||'U').slice(0,1).toUpperCase())}</span>`).join('')}${members.length>5?`<i>+${members.length-5}</i>`:''}</div>
+          <div class="family-wallet-actions"><button class="primary family-open" data-id="${esc(w.id)}">Abrir compartilhada</button><button class="secondary family-copy" data-code="${esc(w.inviteCode||'')}">Copiar código</button></div>
+        </article>`;
+      }
+
+      async function walletsModal() {
+        const shared=await familyWalletList();
+        const personal=mine(state.wallets);
+        openModal(`<div class="wallets-advanced-head"><div><h2>Carteiras e centros de controle</h2><p class="muted">Organize finanças pessoais, empresariais e compartilhe uma carteira com toda a família em tempo real.</p></div></div>
+          <div class="v10-metrics wallet-metrics"><article><span>Minhas carteiras</span><strong>${personal.length}</strong></article><article><span>Compartilhadas</span><strong>${shared.length}</strong></article><article><span>Limites pessoais</span><strong>${moneyText(personal.reduce((s,x)=>s+Number(x.value||0),0))}</strong></article></div>
+          <div class="wallet-tabs"><button id="walletTabPersonal" class="secondary">＋ Carteira pessoal</button><button id="walletTabFamily" class="primary">👨‍👩‍👧 Criar família</button><button id="walletJoinBtn" class="secondary">🔗 Entrar com código</button></div>
+          <section id="walletCreateBox" class="wallet-create-box hidden"></section>
+          <label class="wallet-search">Pesquisar carteira<input id="walletSearch" placeholder="Nome, responsável ou código"></label>
+          <h3>Carteiras compartilhadas</h3><div id="familyWalletList" class="family-wallet-grid">${shared.length?shared.map(familyWalletCard).join(''):'<div class="empty-state">Nenhuma carteira familiar compartilhada ainda.</div>'}</div>
+          <h3>Carteiras pessoais</h3><div id="personalWalletList" class="v10-list">${listHtml('wallets')}</div>`);
+
+        const showPersonal=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="v10WalletForm" class="form-grid"><label>Nome da carteira<input id="v10WalletName" required placeholder="Ex.: Casa, Empresa"></label><label>Responsável<input id="v10WalletOwner" required value="${esc(state.user?.name||'')}"></label><label>Limite mensal<input id="v10WalletLimit" inputmode="decimal" required placeholder="0,00"></label><button class="primary">Criar carteira pessoal</button></form>`; bindV10MoneyInputs('v10WalletLimit'); $('v10WalletForm').onsubmit=async e=>{e.preventDefault();await addItem('wallets',{name:$('v10WalletName').value.trim(),owner:$('v10WalletOwner').value.trim(),value:numberValue($('v10WalletLimit').value),scope:'personal'});walletsModal();}; };
+        const showFamily=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="familyWalletForm" class="form-grid"><label>Nome da família/carteira<input id="familyWalletName" required placeholder="Ex.: Família Rodrigues"></label><label>Limite mensal compartilhado<input id="familyWalletLimit" inputmode="decimal" required placeholder="0,00"></label><p class="muted">Ao criar, será gerado um código. Cada familiar entra com sua própria conta do Finance IA Pro e usa o código para visualizar a mesma carteira.</p><button class="primary">Criar e gerar código</button></form>`; bindV10MoneyInputs('familyWalletLimit'); $('familyWalletForm').onsubmit=async e=>{e.preventDefault();try{const r=await apiFetch('/familyWallet/create',{method:'POST',body:JSON.stringify({name:$('familyWalletName').value.trim(),monthlyLimit:numberValue($('familyWalletLimit').value)})});toast(`Carteira criada. Código: ${r.inviteCode}`);walletsModal();}catch(err){toast(err.message)}}; };
+        $('walletTabPersonal').onclick=showPersonal; $('walletTabFamily').onclick=showFamily;
+        $('walletJoinBtn').onclick=()=>{ $('walletCreateBox').classList.remove('hidden'); $('walletCreateBox').innerHTML=`<form id="familyJoinForm" class="form-grid"><label>Código compartilhado<input id="familyJoinCode" required maxlength="12" placeholder="Ex.: FAM8K2P4"></label><button class="primary">Entrar na carteira da família</button></form>`; $('familyJoinForm').onsubmit=async e=>{e.preventDefault();try{await apiFetch('/familyWallet/join',{method:'POST',body:JSON.stringify({code:$('familyJoinCode').value.trim().toUpperCase()})});toast('Você entrou na carteira compartilhada.');walletsModal();}catch(err){toast(err.message)}}; };
+        $('walletSearch').oninput=e=>{const q=e.target.value.trim().toLowerCase();document.querySelectorAll('.family-wallet-card,.v10-row').forEach(card=>card.style.display=card.textContent.toLowerCase().includes(q)?'':'none')};
+        document.querySelectorAll('.family-copy').forEach(b=>b.onclick=async()=>{try{await navigator.clipboard.writeText(b.dataset.code);toast('Código copiado.')}catch{toast(`Código: ${b.dataset.code}`)}});
+        document.querySelectorAll('.family-open').forEach(b=>b.onclick=()=>familyWalletDetail(b.dataset.id));
+        bindDeletes(walletsModal);
+      }
+
+      async function familyWalletDetail(walletId) {
+        let wallet; try{wallet=(await apiFetch(`/familyWallet/get?id=${encodeURIComponent(walletId)}`)).wallet;}catch(e){return toast(e.message)}
+        if(!wallet)return;
+        const entries=Object.entries(wallet.entries||{}).map(([entryId,x])=>({entryId,...x})).sort((a,b)=>Number(b.createdAt||0)-Number(a.createdAt||0));
+        const income=entries.filter(x=>x.kind==='income').reduce((s,x)=>s+Number(x.value||0),0), expense=entries.filter(x=>x.kind==='expense').reduce((s,x)=>s+Number(x.value||0),0);
+        const members=Object.values(wallet.members||{});
+        openModal(`<h2>👨‍👩‍👧 ${esc(wallet.name)}</h2><p class="muted">Tudo que qualquer membro adicionar aqui aparece para a família inteira.</p>
+          <div class="v10-metrics"><article><span>Saldo compartilhado</span><strong>${moneyText(income-expense)}</strong></article><article><span>Receitas</span><strong>${moneyText(income)}</strong></article><article><span>Despesas</span><strong>${moneyText(expense)}</strong></article><article><span>Membros</span><strong>${members.length}</strong></article></div>
+          <div class="family-invite-box"><div><small>Código para compartilhar</small><b>${esc(wallet.inviteCode||'—')}</b></div><button id="familyDetailCopy" class="secondary">Copiar</button></div>
+          <form id="familyEntryForm" class="form-grid family-entry-form"><label>Tipo<select id="familyEntryKind"><option value="expense">Despesa</option><option value="income">Receita</option></select></label><label>Descrição<input id="familyEntryDesc" required placeholder="Ex.: Mercado"></label><label>Valor<input id="familyEntryValue" required inputmode="decimal" placeholder="0,00"></label><button class="primary">Adicionar para toda família</button></form>
+          <h3>Membros</h3><div class="family-member-list">${members.map(m=>`<div><span>${esc(m.name||'Usuário')}</span><small>${esc(m.email||'')}</small></div>`).join('')}</div>
+          <h3>Movimentações compartilhadas</h3><div class="v10-list">${entries.length?entries.map(x=>`<article class="v10-row"><div><b>${esc(x.description||'Lançamento')}</b><small>${esc(x.memberName||'Família')} • ${new Date(x.createdAt||Date.now()).toLocaleDateString('pt-BR')}</small></div><strong class="${x.kind==='income'?'safe-text':'danger-text'}">${x.kind==='income'?'+':'−'} ${moneyText(x.value)}</strong></article>`).join(''):'<div class="empty-state">Nenhuma movimentação compartilhada.</div>'}</div>`);
+        bindV10MoneyInputs('familyEntryValue'); $('familyDetailCopy').onclick=async()=>{try{await navigator.clipboard.writeText(wallet.inviteCode);toast('Código copiado.')}catch{toast(wallet.inviteCode)}};
+        $('familyEntryForm').onsubmit=async e=>{e.preventDefault();try{await apiFetch('/familyWallet/addEntry',{method:'POST',body:JSON.stringify({walletId,kind:$('familyEntryKind').value,description:$('familyEntryDesc').value.trim(),value:numberValue($('familyEntryValue').value)})});toast('Movimentação sincronizada com a família.');familyWalletDetail(walletId);}catch(err){toast(err.message)}};
       }
 
       function contactModal(type,title) {
