@@ -329,18 +329,23 @@ function transactionModal(type){
     const value=moneyInputValue(txValueInput);
     if(!Number.isFinite(value)||value<=0){txValueInput.focus();return toast('Digite um valor válido. Exemplo: 7.000,00');}
     const item={id:crypto.randomUUID(),userId:state.user.id,type,description:$('txDescription').value.trim(),value,category:$('txCategory').value,date:$('txDate').value,createdAt:Date.now()};
+    // Mantém cópia local imediata e a fila de sincronização já existente.
     state.transactions.push(item);
     persist();
+    const submitButton=$('transactionForm')?.querySelector('button[type="submit"]');
+    if(submitButton){submitButton.disabled=true;submitButton.textContent='Salvando...';}
+    let firebaseConfirmed=false;
     try{
-      if(cloudReady){
+      if(cloudReady && cloudDb && cloudAuth?.currentUser?.uid===item.userId){
         const {id,userId,...data}=item;
         await cloudDb.ref(`finance/${userId}/transactions/${id}`).set(data);
+        firebaseConfirmed=true;
       }
-      closeModal();render();toast(cloudReady?'Lançamento salvo no Firebase!':'Lançamento salvo neste aparelho.');
     }catch(err){
-      console.error('Erro ao salvar lançamento no Firebase:',err);
-      closeModal();render();toast('Salvo no aparelho, mas o Firebase recusou. Verifique as regras.');
+      console.error('Firebase não confirmou o lançamento:',err);
     }
+    closeModal();render();
+    toast(firebaseConfirmed?'Lançamento salvo no Firebase!':'Lançamento salvo no aparelho; sincronização com Firebase pendente.');
   }
 }
 function goalModal(){

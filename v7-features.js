@@ -263,8 +263,86 @@
 
   function calendarModal(){const items=[...onlyMine(state.bills).map(x=>({...x,label:x.description})),...onlyMine(state.installments).map(x=>({...x,dueDate:x.firstDue,label:x.description}))].sort((a,b)=>String(a.dueDate).localeCompare(String(b.dueDate)));openModal(`<h2>Calendário financeiro</h2><div class="calendar-list">${items.length?items.map(x=>`<div class="calendar-row"><time>${dateBR(x.dueDate)}</time><div><b>${escapeHtml(x.label)}</b><small>${x.kind?x.kind==='payable'?'Conta a pagar':'Conta a receber':'Parcelamento'}</small></div><strong>${money(x.value||x.installmentValue||0)}</strong></div>`).join(''):'<div class="empty-state">Nenhum compromisso cadastrado.</div>'}</div>`);}
 
-  function smartAnalysisModal(){const tx=userTx(),income=sumMoney(tx.filter(x=>x.type==='income')),expense=sumMoney(tx.filter(x=>x.type==='expense')),balance=income-expense;const byCat={};tx.filter(x=>x.type==='expense').forEach(x=>byCat[x.category]=(byCat[x.category]||0)+Number(x.value||0));const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,5);const monthlyNeed=centsSum(onlyMine(state.bills).filter(x=>x.kind==='payable'&&x.status!=='paid'));openModal(`<h2>IA Financeira</h2><div class="ai-box">${buildInsight(income,expense,monthlyNeed,centsSum(onlyMine(state.bills).filter(x=>x.kind==='receivable'&&x.status!=='received')))}</div><div class="summary-grid"><article class="summary"><span>Saldo</span><strong>${money(balance)}</strong></article><article class="summary"><span>Comprometido</span><strong>${money(monthlyNeed)}</strong></article></div><h3>Maiores gastos por categoria</h3><div class="report-list">${top.length?top.map(([cat,val])=>`<div><span>${escapeHtml(cat)}</span><strong>${money(val)}</strong></div>`).join(''):'<div class="empty-state">Sem despesas para analisar.</div>'}</div><div class="modal-actions"><button id="exportCsvBtn" class="secondary">Exportar Excel/CSV</button><button id="printReportBtn" class="primary">Gerar PDF</button></div>`);$('exportCsvBtn').onclick=exportCsv;$('printReportBtn').onclick=()=>window.print();}
-  function exportCsv(){const rows=[['Tipo','Descrição','Categoria','Valor','Data'],...userTx().map(x=>[x.type==='income'?'Receita':'Despesa',x.description,x.category,Number(x.value).toFixed(2).replace('.',','),x.date])];const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\n');const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='finance-ia-pro-relatorio.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('Relatório CSV gerado.');}
+  // Relatório detalhado por período: mantém os demais módulos e a IA Financeira.
+  const reportDate = x => {
+    const raw=String(x.date||x.createdAt||'');
+    if(/^\d{4}-\d{2}-\d{2}/.test(raw))return raw.slice(0,10);
+    const d=new Date(x.date||x.createdAt||0);
+    return Number.isNaN(d.getTime())?'':`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  const reportMoney = v => money(Number(v)||0);
+  const reportEntries = () => {
+    const start=$('reportStart')?.value||'',end=$('reportEnd')?.value||'';
+    return userTx().filter(x=>{const d=reportDate(x);return d&&(!start||d>=start)&&(!end||d<=end)}).sort((a,b)=>reportDate(a).localeCompare(reportDate(b))||String(a.description||'').localeCompare(String(b.description||''),'pt-BR'));
+  };
+  const reportGroups = (tx,type) => {
+    const map=new Map();
+    tx.filter(x=>x.type===type).forEach(x=>{const key=String(x.category||'Sem categoria').trim()||'Sem categoria';if(!map.has(key))map.set(key,[]);map.get(key).push(x)});
+    return [...map.entries()].sort((a,b)=>a[0].localeCompare(b[0],'pt-BR'));
+  };
+  const reportTotal = tx => fromCents(tx.reduce((sum,x)=>sum+toCents(x.value),0));
+  function smartAnalysisModal(){
+    const tx=userTx(),income=sumMoney(tx.filter(x=>x.type==='income')),expense=sumMoney(tx.filter(x=>x.type==='expense')),balance=income-expense;
+    const byCat={};tx.filter(x=>x.type==='expense').forEach(x=>byCat[x.category]=(byCat[x.category]||0)+Number(x.value||0));
+    const top=Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    const monthlyNeed=centsSum(onlyMine(state.bills).filter(x=>x.kind==='payable'&&x.status!=='paid'));
+    const dates=tx.map(reportDate).filter(Boolean).sort();
+    const now=todayISO(),initial=now.slice(0,7)+'-01';
+    openModal(`<h2>IA Financeira</h2><div class="ai-box">${buildInsight(income,expense,monthlyNeed,centsSum(onlyMine(state.bills).filter(x=>x.kind==='receivable'&&x.status!=='received')))}</div><div class="summary-grid"><article class="summary"><span>Saldo</span><strong>${money(balance)}</strong></article><article class="summary"><span>Comprometido</span><strong>${money(monthlyNeed)}</strong></article></div><h3>Maiores gastos por categoria</h3><div class="report-list">${top.length?top.map(([cat,val])=>`<div><span>${escapeHtml(cat)}</span><strong>${money(val)}</strong></div>`).join(''):'<div class="empty-state">Sem despesas para analisar.</div>'}</div><h3>Relatório detalhado por período</h3><div class="form-grid"><label>Data inicial<input type="date" id="reportStart" value="${initial}"></label><label>Data final<input type="date" id="reportEnd" value="${now}"></label></div><div class="modal-actions"><button id="reportAllDates" class="secondary" type="button">Todo o histórico</button><button id="reportPreview" class="secondary" type="button">Ver totais</button></div><div id="reportTotals" class="ai-box" style="margin-top:12px"></div><div class="modal-actions"><button id="exportCsvBtn" class="secondary">Exportar Excel/CSV</button><button id="printReportBtn" class="primary">Gerar PDF detalhado</button></div>`);
+    const update=()=>{const list=reportEntries(),r=list.filter(x=>x.type==='income'),d=list.filter(x=>x.type==='expense');$('reportTotals').innerHTML=`<b>Resumo do período</b><p>${list.length} lançamentos · Receitas: ${reportMoney(reportTotal(r))} · Despesas: ${reportMoney(reportTotal(d))} · Saldo: ${reportMoney(reportTotal(r)-reportTotal(d))}</p>`};
+    $('reportStart').onchange=update;$('reportEnd').onchange=update;$('reportPreview').onclick=update;
+    $('reportAllDates').onclick=()=>{$('reportStart').value=dates[0]||'';$('reportEnd').value=dates[dates.length-1]||now;update()};
+    $('exportCsvBtn').onclick=exportCsv;$('printReportBtn').onclick=exportDetailedPdf;update();
+  }
+  function exportCsv(){
+    const tx=reportEntries();
+    if(!tx.length)return toast('Nenhum lançamento encontrado no período.');
+    const rows=[['Tipo','Categoria','Descrição','Data','Valor'],...tx.map(x=>[x.type==='income'?'Receita':'Despesa',x.category||'Sem categoria',x.description||'Sem descrição',reportDate(x).split('-').reverse().join('/'),Number(x.value||0).toFixed(2).replace('.',',')])];
+    const csv='\uFEFF'+rows.map(r=>r.map(v=>`"${String(v??'').replace(/"/g,'""')}"`).join(';')).join('\r\n');
+    const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='finance-ia-pro-relatorio-detalhado.csv';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);toast('CSV detalhado gerado.');
+  }
+  function exportDetailedPdf(){
+    const tx=reportEntries();
+    if(!tx.length)return toast('Nenhum lançamento encontrado no período.');
+    const Pdf=window.jspdf?.jsPDF;
+    if(!Pdf)return toast('Gerador PDF indisponível. Verifique sua conexão.');
+    const pdf=new Pdf({unit:'mm',format:'a4'}),width=210,margin=15,maxY=278;
+    let y=18,page=1;
+    const addPage=()=>{pdf.addPage();page++;y=18};
+    const need=h=>{if(y+h>maxY)addPage()};
+    const line=(txt,opts={})=>{
+      const size=opts.size||10;pdf.setFont('helvetica',opts.bold?'bold':'normal');pdf.setFontSize(size);
+      const lines=pdf.splitTextToSize(String(txt),opts.width||180);
+      const height=lines.length*(size*0.43+1.5);need(height+2);
+      pdf.text(lines,opts.x||margin,y);y+=height+2;
+    };
+    const date=d=>d?d.split('-').reverse().join('/'):'Sem data';
+    const start=$('reportStart').value,end=$('reportEnd').value;
+    line('FINANCE IA PRO - RELATORIO FINANCEIRO',{size:15,bold:true});
+    line(`Periodo: ${date(start)} a ${date(end)}`,{size:10});
+    line(`Gerado em: ${new Date().toLocaleString('pt-BR')}`,{size:9});
+    const income=tx.filter(x=>x.type==='income'),expense=tx.filter(x=>x.type==='expense');
+    line(`TOTAL DE RECEITAS: ${reportMoney(reportTotal(income))}`,{size:11,bold:true});
+    line(`TOTAL DE DESPESAS: ${reportMoney(reportTotal(expense))}`,{size:11,bold:true});
+    line(`SALDO DO PERIODO: ${reportMoney(reportTotal(income)-reportTotal(expense))}`,{size:11,bold:true});
+    for(const [type,title] of [['expense','DESPESAS POR CATEGORIA'],['income','RECEITAS POR CATEGORIA']]){
+      y+=4;need(16);line(title,{size:13,bold:true});
+      const groups=reportGroups(tx,type);
+      if(!groups.length)line('Nenhum lancamento neste periodo.');
+      for(const [category,items] of groups){
+        need(18);pdf.setDrawColor(205,214,225);pdf.line(margin,y,width-margin,y);y+=5;
+        line(`${category} - TOTAL: ${reportMoney(reportTotal(items))} (${items.length} lancamento(s))`,{size:11,bold:true});
+        for(const item of items){
+          line(`${date(reportDate(item))}  |  ${item.description||'Sem descricao'}  |  ${reportMoney(item.value)}`,{size:9,x:margin+3,width:174});
+        }
+        y+=3;
+      }
+    }
+    const count=pdf.getNumberOfPages();
+    for(let i=1;i<=count;i++){pdf.setPage(i);pdf.setFont('helvetica','normal');pdf.setFontSize(8);pdf.setTextColor(100);pdf.text(`Finance IA Pro  |  Pagina ${i} de ${count}`,margin,289)}
+    pdf.save(`finance-ia-pro-relatorio-${start||'inicio'}-a-${end||'fim'}.pdf`);
+    toast('PDF detalhado gerado.');
+  }
 
   // Troca a aba Relatórios por relatório real e mantém a IA acessível.
   document.querySelectorAll('.nav').forEach(n=>{
