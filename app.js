@@ -30,32 +30,59 @@ async function apiFetch(path, options={}){
   return data;
 }
 function clearCloudListeners(){ cloudUnsubs.forEach(x=>x()); cloudUnsubs=[]; }
+// v10.4.4: sincronização por registro, sem sobrescrever todo o banco.
+const pendingKey=uid=>`fia_pending_${uid}`;
+function pendingChanges(uid){try{return JSON.parse(localStorage.getItem(pendingKey(uid))||'{}')}catch(e){return {}}}
+function markPending(kind,item){
+  if(!item?.userId||!item.id)return;
+  const pending=pendingChanges(item.userId);
+  if(!pending[kind])pending[kind]={};
+  pending[kind][item.id]=true;
+  localStorage.setItem(pendingKey(item.userId),JSON.stringify(pending));
+}
+let syncBusy=false;
+async function syncPending(){
+  const uid=cloudAuth?.currentUser?.uid;
+  if(!cloudReady||!uid||syncBusy||state.user?.id!==uid)return;
+  syncBusy=true;
+  try{
+    const pending=pendingChanges(uid);
+    for(const [kind,items] of [['transactions',state.transactions],['goals',state.goals]]){
+      for(const id of Object.keys(pending[kind]||{})){
+        const item=items.find(x=>x.userId===uid&&x.id===id);
+        if(!item)continue; // Exclusão não é tratada como atualização.
+        const {id:recordId,userId,...data}=item;
+        await cloudDb.ref(`finance/${uid}/${kind}/${recordId}`).set(data);
+        const current=pendingChanges(uid);
+        if(current[kind])delete current[kind][id];
+        localStorage.setItem(pendingKey(uid),JSON.stringify(current));
+      }
+    }
+  }catch(err){console.error('Sincronização pendente:',err)}
+  finally{syncBusy=false}
+}
+function mergeCloudRecords(uid,kind,raw){
+  if(state.user?.id!==uid)return;
+  const remote=Object.entries(raw||{}).map(([id,x])=>({id,userId:uid,...x}));
+  const pending=pendingChanges(uid)[kind]||{};
+  const local=state[kind].filter(x=>x.userId===uid);
+  const merged=new Map(remote.map(x=>[x.id,x]));
+  // Somente lançamentos realmente pendentes podem prevalecer sobre o Firebase.
+  for(const item of local)if(pending[item.id])merged.set(item.id,item);
+  state[kind]=[...state[kind].filter(x=>x.userId!==uid),...merged.values()];
+  localStorage.setItem(kind==='transactions'?'fia_transactions':'fia_goals',JSON.stringify(state[kind]));
+  render();
+  syncPending();
+}
 function subscribeCloudData(uid){
   clearCloudListeners();
-  const bind=(path,cb)=>{const ref=cloudDb.ref(path); const fn=ref.on('value',snap=>cb(snap.val()||{})); cloudUnsubs.push(()=>ref.off('value',fn));};
-  bind(`finance/${uid}/transactions`,v=>{
-    const remote=Object.entries(v).map(([id,x])=>({id,userId:uid,...x}));
-    const local=state.transactions.filter(x=>x.userId===uid);
-    // Não apaga lançamentos locais quando o Firebase retorna vazio por regra, atraso ou conexão.
-    if(remote.length || !local.length){
-      state.transactions=[...state.transactions.filter(x=>x.userId!==uid),...remote];
-      localStorage.setItem('fia_transactions',JSON.stringify(state.transactions));
-      render();
-    }else{
-      cloudSaveState().catch(e=>console.error('Falha ao reenviar lançamentos locais:',e));
-    }
-  });
-  bind(`finance/${uid}/goals`,v=>{
-    const remote=Object.entries(v).map(([id,x])=>({id,userId:uid,...x}));
-    const local=state.goals.filter(x=>x.userId===uid);
-    if(remote.length || !local.length){
-      state.goals=[...state.goals.filter(x=>x.userId!==uid),...remote];
-      localStorage.setItem('fia_goals',JSON.stringify(state.goals));
-      render();
-    }else{
-      cloudSaveState().catch(e=>console.error('Falha ao reenviar metas locais:',e));
-    }
-  });
+  const bind=(path,cb)=>{
+    const ref=cloudDb.ref(path);
+    const fn=ref.on('value',snap=>cb(snap.val()||{}),err=>console.error('Firebase leitura:',path,err));
+    cloudUnsubs.push(()=>ref.off('value',fn));
+  };
+  bind(`finance/${uid}/transactions`,v=>mergeCloudRecords(uid,'transactions',v));
+  bind(`finance/${uid}/goals`,v=>mergeCloudRecords(uid,'goals',v));
   bind(`users/${uid}`,v=>{if(!v||!state.user)return; const wasLocked=accessExpired(); state.user={id:uid,...v}; if(isOwner()) state.user.role='owner'; state.plan=accessPlan(v); localStorage.setItem('fia_user',JSON.stringify(state.user)); localStorage.setItem('fia_plan',state.plan); render(); if(wasLocked&&subscriptionActive()) unlockAfterApprovedPayment();});
   bind('settings/financeIa',v=>{state.settings={...state.settings,...v,premiumPrice:24.90}; localStorage.setItem('fia_settings',JSON.stringify(state.settings));});
   bind(`userNotifications/${uid}`,v=>{
@@ -65,25 +92,20 @@ function subscribeCloudData(uid){
     state.notifications=[...legacy,...incoming];
     localStorage.setItem('fia_notifications',JSON.stringify(state.notifications));
     renderAdminNotifications();
-    if(notificationsInitialized){
-      fresh.forEach(n=>showSystemNotification(n));
-      if(fresh.length) toast(fresh.length===1?'Você recebeu uma nova notificação.':`Você recebeu ${fresh.length} novas notificações.`);
-    }
-    knownNotificationIds=new Set(incoming.map(n=>n.id));
-    notificationsInitialized=true;
+    if(notificationsInitialized){fresh.forEach(n=>showSystemNotification(n));if(fresh.length)toast(fresh.length===1?'Você recebeu uma nova notificação.':`Você recebeu ${fresh.length} novas notificações.`)}
+    knownNotificationIds=new Set(incoming.map(n=>n.id));notificationsInitialized=true;
   });
   if(isOwner()){
     bind('users',v=>{state.users=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_users',JSON.stringify(state.users));});
     bind('payments',v=>{state.payments=Object.entries(v).map(([id,x])=>({id,...x}));localStorage.setItem('fia_payments',JSON.stringify(state.payments));});
     bind('adminLogs',v=>{state.adminLogs=Object.entries(v).map(([id,x])=>({id,...x})).sort((a,b)=>new Date(b.createdAt||0)-new Date(a.createdAt||0));localStorage.setItem('fia_admin_logs',JSON.stringify(state.adminLogs));});
   }
+  syncPending();
 }
 async function cloudSaveState(){
-  if(!cloudReady||!state.user?.id) return;
-  const uid=state.user.id;
-  const tx={}; state.transactions.filter(x=>x.userId===uid).forEach(x=>{const {id,userId,...data}=x;tx[id]=data});
-  const goals={}; state.goals.filter(x=>x.userId===uid).forEach(x=>{const {id,userId,...data}=x;goals[id]=data});
-  await cloudDb.ref(`finance/${uid}`).update({transactions:tx,goals});
+  if(!cloudReady||!state.user?.id)return;
+  // Persistência incremental: não grava arrays inteiros nem exclui dados remotos.
+  await syncPending();
 }
 
 const $ = id => document.getElementById(id);
@@ -331,6 +353,7 @@ function transactionModal(type){
     const item={id:crypto.randomUUID(),userId:state.user.id,type,description:$('txDescription').value.trim(),value,category:$('txCategory').value,date:$('txDate').value,createdAt:Date.now()};
     // Mantém cópia local imediata e a fila de sincronização já existente.
     state.transactions.push(item);
+    markPending('transactions',item);
     persist();
     const submitButton=$('transactionForm')?.querySelector('button[type="submit"]');
     if(submitButton){submitButton.disabled=true;submitButton.textContent='Salvando...';}
@@ -340,6 +363,7 @@ function transactionModal(type){
         const {id,userId,...data}=item;
         await cloudDb.ref(`finance/${userId}/transactions/${id}`).set(data);
         firebaseConfirmed=true;
+        const pending=pendingChanges(userId);if(pending.transactions)delete pending.transactions[id];localStorage.setItem(pendingKey(userId),JSON.stringify(pending));
       }
     }catch(err){
       console.error('Firebase não confirmou o lançamento:',err);
@@ -358,7 +382,7 @@ function goalModal(){
     const target=parseBRMoney(targetInput.value), current=parseBRMoney(currentInput.value||'0');
     if(!Number.isFinite(target)||target<=0)return toast('Digite um valor válido para a meta.');
     if(!Number.isFinite(current)||current<0)return toast('Digite um valor guardado válido.');
-    state.goals.push({id:crypto.randomUUID(),userId:state.user.id,name:$('goalName').value.trim(),target,current});persist();closeModal();render();toast('Meta criada!');
+    const newGoal={id:crypto.randomUUID(),userId:state.user.id,name:$('goalName').value.trim(),target,current};state.goals.push(newGoal);markPending('goals',newGoal);persist();closeModal();render();toast('Meta criada!');
   }
 }
 function ownsItem(item){return Boolean(item&&state.user&&item.userId===state.user.id)}
@@ -379,7 +403,7 @@ function editTransactionModal(id){
   openModal(`<h2>Editar lançamento</h2><form id="editTransactionForm" class="form-grid"><label>Tipo<select id="editTxType"><option value="income" ${item.type==='income'?'selected':''}>Receita</option><option value="expense" ${item.type==='expense'?'selected':''}>Despesa</option></select></label><label>Descrição<input id="editTxDescription" required value="${escapeHtml(item.description)}" /></label><label>Valor<input id="editTxValue" type="text" inputmode="decimal" required value="${Number(item.value).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><label>Categoria<select id="editTxCategory">${categoryOptions(item.type,item.category)}</select></label><label>Data<input id="editTxDate" type="date" value="${item.date}" required /></label><button class="primary" type="submit">Salvar alterações</button></form>`);
   const valueInput=$('editTxValue'),typeInput=$('editTxType'),categoryInput=$('editTxCategory');enableLiveMoneyMask(valueInput);
   typeInput.onchange=()=>categoryInput.innerHTML=categoryOptions(typeInput.value,'');
-  $('editTransactionForm').onsubmit=e=>{e.preventDefault();const fresh=state.transactions.find(t=>t.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const value=moneyInputValue(valueInput);if(!Number.isFinite(value)||value<=0)return toast('Digite um valor válido.');Object.assign(fresh,{type:typeInput.value,description:$('editTxDescription').value.trim(),value,category:categoryInput.value,date:$('editTxDate').value,updatedAt:Date.now()});persist();closeModal();render();toast('Lançamento atualizado com sucesso!')};
+  $('editTransactionForm').onsubmit=e=>{e.preventDefault();const fresh=state.transactions.find(t=>t.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const value=moneyInputValue(valueInput);if(!Number.isFinite(value)||value<=0)return toast('Digite um valor válido.');Object.assign(fresh,{type:typeInput.value,description:$('editTxDescription').value.trim(),value,category:categoryInput.value,date:$('editTxDate').value,updatedAt:Date.now()});markPending('transactions',fresh);persist();closeModal();render();toast('Lançamento atualizado com sucesso!')};
 }
 function openGoalDetails(id){
   const item=state.goals.find(g=>g.id===id);
@@ -392,7 +416,7 @@ function editGoalModal(id){
   const item=state.goals.find(g=>g.id===id);if(!ownsItem(item))return toast('Ação não permitida.');
   openModal(`<h2>Editar meta</h2><form id="editGoalForm" class="form-grid"><label>Nome da meta<input id="editGoalName" required value="${escapeHtml(item.name)}" /></label><label>Valor desejado<input id="editGoalTarget" type="text" inputmode="decimal" required value="${Number(item.target).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><label>Valor já guardado<input id="editGoalCurrent" type="text" inputmode="decimal" required value="${Number(item.current).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2})}" /></label><button class="primary" type="submit">Salvar alterações</button></form>`);
   const target=$('editGoalTarget'),current=$('editGoalCurrent');enableLiveMoneyMask(target);enableLiveMoneyMask(current);
-  $('editGoalForm').onsubmit=e=>{e.preventDefault();const fresh=state.goals.find(g=>g.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const targetValue=moneyInputValue(target),currentValue=moneyInputValue(current);if(!Number.isFinite(targetValue)||targetValue<=0)return toast('Digite um objetivo válido.');if(!Number.isFinite(currentValue)||currentValue<0)return toast('Digite um valor guardado válido.');Object.assign(fresh,{name:$('editGoalName').value.trim(),target:targetValue,current:currentValue,updatedAt:Date.now()});persist();closeModal();render();toast('Meta atualizada com sucesso!')};
+  $('editGoalForm').onsubmit=e=>{e.preventDefault();const fresh=state.goals.find(g=>g.id===id);if(!ownsItem(fresh))return toast('Ação não permitida.');const targetValue=moneyInputValue(target),currentValue=moneyInputValue(current);if(!Number.isFinite(targetValue)||targetValue<=0)return toast('Digite um objetivo válido.');if(!Number.isFinite(currentValue)||currentValue<0)return toast('Digite um valor guardado válido.');Object.assign(fresh,{name:$('editGoalName').value.trim(),target:targetValue,current:currentValue,updatedAt:Date.now()});markPending('goals',fresh);persist();closeModal();render();toast('Meta atualizada com sucesso!')};
 }
 function protectedDeleteModal(kind,id,label){
   const item=kind==='transaction'?state.transactions.find(t=>t.id===id):state.goals.find(g=>g.id===id);
@@ -422,6 +446,7 @@ function protectedDeleteModal(kind,id,label){
       else state.goals=state.goals.filter(g=>!(g.id===id&&g.userId===state.user.id));
       localStorage.setItem('fia_transactions',JSON.stringify(state.transactions));
       localStorage.setItem('fia_goals',JSON.stringify(state.goals));
+      const pending=pendingChanges(state.user.id);if(pending[kind==='transaction'?'transactions':'goals'])delete pending[kind==='transaction'?'transactions':'goals'][id];localStorage.setItem(pendingKey(state.user.id),JSON.stringify(pending));
       closeModal();render();toast(kind==='transaction'?'Lançamento excluído com sucesso.':'Meta excluída com sucesso.');
     }catch(err){
       console.error('Erro ao excluir:',err);
