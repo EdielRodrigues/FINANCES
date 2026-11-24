@@ -17,7 +17,7 @@ function dayItems(date){return activeItems().filter(x=>x.date===date)}
 function free(date){return Math.max(0,MAX-dayItems(date).length)}
 function bid(){return `AG-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.random().toString(36).slice(2,7).toUpperCase()}`}
 function listen(){items=read();if(ref&&listener)try{ref.off('value',listener)}catch{};if(!cloudReady||!cloudDb||!path())return;ref=cloudDb.ref(path());listener=ref.on('value',s=>{items=s.val()||{};cache();refreshAll()})}
-async function save(x){items[x.id]=x;cache();if(cloudReady&&cloudDb&&path())await cloudDb.ref(`${path()}/${x.id}`).set(x);refreshAll()}
+async function save(x){if(cloudReady&&cloudDb&&path())await cloudDb.ref(`${path()}/${x.id}`).set(x);items[x.id]=x;cache();refreshAll()}
 async function del(id){delete items[id];cache();if(cloudReady&&cloudDb&&path())await cloudDb.ref(`${path()}/${id}`).remove();refreshAll()}
 function stateDay(date){const d=new Date(date+'T12:00:00'),t=new Date();t.setHours(0,0,0,0);if(d<t)return'unavailable';const f=free(date);return f===0?'full':f===MAX?'free':'partial'}
 function statusLabel(s){return ({confirmed:'Confirmado',waiting:'Aguardando',completed:'Concluído',missed:'Faltou',cancelled:'Cancelado'})[s]||'Confirmado'}
@@ -39,7 +39,13 @@ function matchesFilter(x){
   return (x.date||'')>=today&&x.status!=='completed'&&x.status!=='missed'&&x.status!=='cancelled';
 }
 function vipDates(x,f){const base=new Date(x.date+'T12:00:00'),out=[];for(let i=0;i<(f==='monthly'?12:f==='weekly'?52:26);i++){const d=new Date(base);if(f==='monthly'){d.setDate(1);d.setMonth(base.getMonth()+i);d.setDate(Math.min(base.getDate(),new Date(d.getFullYear(),d.getMonth()+1,0).getDate()))}else d.setDate(base.getDate()+i*(f==='weekly'?7:14));out.push(iso(d))}return out}
-async function makeVip(id){const x=items[id];if(!x||x.vip||x.status!=='confirmed'||x.date<todayIso())return;const f=({'1':'weekly','2':'biweekly','3':'monthly'})[prompt('VIP: 1 semanal, 2 quinzenal (14 dias), 3 mensal','1')];if(!f)return;const dates=vipDates(x,f);if(!confirm('Confirmar '+dates.length+' reservas VIP por aproximadamente um ano?'))return;const changes={};for(const d of dates){const k=d===x.date?id:id+'-VIP-'+d;changes[k]={...x,id:k,date:d,vip:f,vipGroup:id,updatedAt:Date.now()}}const apply=current=>{current=current||{};if(!current[id]||current[id].vip||current[id].status!=='confirmed')return;for(const d of dates){const used=Object.values(current).filter(a=>a.id!==id&&a.date===d&&a.status!=='cancelled');if(used.length>=MAX||used.some(a=>a.time===x.time))return}return {...current,...changes}};if(cloudReady&&cloudDb&&path()){const result=await cloudDb.ref(path()).transaction(apply);if(!result.committed)return toast('Conflito de vagas ou horários. Nenhuma reserva criada.');items=result.snapshot.val()||{}}else{const next=apply(items);if(!next)return toast('Conflito de vagas ou horários.');items=next}cache();refreshAll();toast('Reservas VIP confirmadas.')}
+const vipNames={weekly:'Semanal',biweekly:'Quinzenal',monthly:'Mensal'};
+function pending(x){return ['confirmed','waiting'].includes(x.status)}
+function showFilter(f){listFilter=f;const el=$('financeBookingFilter');if(el)el.value=f;refreshAll()}
+async function changeStatus(id,status){const x=items[id];if(!x)return;try{await save({...x,status,updatedAt:Date.now(),...(status==='cancelled'?{cancelledAt:Date.now()}:{completedAt:Date.now()})});showFilter(status);toast(status==='completed'?'Agendamento concluído.':'Agendamento cancelado.')}catch(e){toast('Não foi possível salvar. Verifique a conexão.')}}
+function makeVip(id){const x=items[id];if(!x)return;const old=$('fiaVipPanel');if(old)old.remove();const panel=document.createElement('section');panel.id='fiaVipPanel';panel.style.cssText='grid-column:1/-1;border:1px solid #b68a35;border-radius:16px;padding:14px;background:#101e30;color:#f1f5f9';const group=x.vipGroup;const members=Object.values(items).filter(a=>group&&a.vipGroup===group&&pending(a)&&a.date>=todayIso()).sort((a,b)=>a.date.localeCompare(b.date));const base=members[0]||x;panel.innerHTML=`<h3 style="color:#f5c451">👑 Agenda VIP</h3><p>${esc(x.clientName)} • ${x.vip? 'VIP '+vipNames[x.vip]:'Cliente normal'}</p><form class="form-grid"><label>Frequência<select name="frequency"><option value="weekly">Semanal — 7 dias</option><option value="biweekly">Quinzenal — 14 dias</option><option value="monthly">Mensal</option></select></label><label>Primeira data<input name="date" type="date" min="${todayIso()}" value="${base.date>=todayIso()?base.date:todayIso()}" required></label><label>Horário<input name="time" type="time" value="${esc(base.time)}" required></label><div data-preview></div><button class="primary" type="submit">${x.vip?'Salvar alteração':'Ativar VIP'}</button>${x.vip?'<button type="button" data-remove class="secondary">Remover VIP</button>':''}<button type="button" data-close class="secondary">Fechar</button></form>`;const btn=document.querySelector('[data-vip="'+CSS.escape(id)+'"]');if(!btn)return;btn.parentElement.append(panel);const form=panel.querySelector('form');form.elements.frequency.value=x.vip||'weekly';const preview=()=>{const dates=vipDates({date:form.elements.date.value},form.elements.frequency.value);panel.querySelector('[data-preview]').innerHTML='<b>Próximas datas</b>'+dates.slice(0,5).map(d=>'<div>'+new Date(d+'T12:00:00').toLocaleDateString('pt-BR')+' • '+esc(form.elements.time.value)+'</div>').join('')};form.oninput=preview;preview();panel.querySelector('[data-close]').onclick=()=>panel.remove();
+async function commit(remove){const f=form.elements.frequency.value,date=form.elements.date.value,time=form.elements.time.value;const dates=remove?[]:vipDates({date},f);if(!remove&&(!date||date<todayIso()||!time))return toast('Escolha data e horário válidos.');const apply=current=>{if(!current||!current[id])return;const next={...current};const original=current[id];const gid=original.vipGroup||id;const future=Object.values(current).filter(a=>a.vipGroup===gid&&pending(a)&&a.date>=todayIso()).sort((a,b)=>a.date.localeCompare(b.date));const keep=future[0]||(pending(original)&&original.date>=todayIso()?original:null);for(const a of future){if(a.id!==keep?.id)delete next[a.id]}if(remove){if(keep){const a={...keep};delete a.vip;delete a.vipGroup;next[a.id]=a}return next}if(keep)delete next[keep.id];for(const d of dates){const used=Object.values(next).filter(a=>a.date===d&&a.status!=='cancelled');if(used.length>=MAX||used.some(a=>a.time===time))return;const key=d===date&&keep?keep.id:gid+'-VIP-'+d;if(next[key])return;next[key]={...original,id:key,date:d,time,vip:f,vipGroup:gid,status:'confirmed',updatedAt:Date.now()};delete next[key].cancelledAt;delete next[key].completedAt}return next};try{if(cloudReady&&cloudDb&&path()){const result=await cloudDb.ref(path()).transaction(apply);if(!result.committed)return toast('Conflito de vagas ou horários. Nenhuma alteração salva.');items=result.snapshot.val()||{}}else{const next=apply(items);if(!next)return toast('Conflito de vagas ou horários.');items=next}cache();panel.remove();refreshAll();toast(remove?'VIP removido. Histórico preservado.':'Agenda VIP salva.')}catch(e){toast('Erro ao salvar VIP. Verifique a conexão.')}}
+form.onsubmit=e=>{e.preventDefault();commit(false)};const remove=panel.querySelector('[data-remove]');if(remove)remove.onclick=()=>{if(confirm('Remover VIP e liberar as reservas futuras, mantendo o próximo atendimento normal e o histórico?'))commit(true)};panel.scrollIntoView({block:'nearest',behavior:'smooth'})}
 function renderList(){
   const el=$('financeBookingList');if(!el)return;
   const list=Object.values(items).filter(matchesFilter).sort((a,b)=>(a.date+a.time).localeCompare(b.date+b.time));
@@ -60,9 +66,9 @@ function renderList(){
       <div class="fia-booking-record-actions">
         ${x.status!=='cancelled'?`<button class="secondary" data-edit="${x.id}">Editar</button>`:''}
         <button class="secondary" data-wa="${x.id}">WhatsApp</button>
-        ${!x.vip&&x.status==='confirmed'&&x.date>=todayIso()?`<button class="secondary" data-vip="${x.id}">👑 Agendar VIP</button>`:''}
-        ${x.status!=='completed'&&x.status!=='cancelled'?`<button class="success-button" data-status="completed" data-id="${x.id}">Concluir</button>`:''}
-        ${x.status!=='cancelled'?`<button class="booking-cancel-button" data-cancel="${x.id}">Cancelar</button>`:''}
+        <button type="button" class="secondary" style="grid-column:1/-1;border-color:#b68a35;color:#f5c451" data-vip="${x.id}">👑 Agenda VIP${x.vip?' • '+vipNames[x.vip]:''}</button>
+        ${x.status!=='completed'&&x.status!=='cancelled'?`<button type="button" style="background:#17654f;color:white;border-radius:14px" class="success-button" data-status="completed" data-id="${x.id}">Concluir</button>`:''}
+        ${x.status!=='cancelled'?`<button type="button" style="border-radius:14px" class="booking-cancel-button" data-cancel="${x.id}">Cancelar</button>`:''}
         <button class="danger-button booking-delete-button" data-delete="${x.id}">🗑 Excluir</button>
       </div>
     </article>`).join(''):'<div class="empty-state">Nenhum agendamento encontrado.</div>';
@@ -70,8 +76,7 @@ function renderList(){
   el.querySelectorAll('[data-cancel]').forEach(b=>b.onclick=async()=>{
     const x=items[b.dataset.cancel];if(!x)return;
     if(!confirm('Cancelar este agendamento? Ele ficará no histórico como cancelado.'))return;
-    await save({...x,status:'cancelled',cancelledAt:Date.now(),updatedAt:Date.now()});
-    toast('Agendamento cancelado e mantido no histórico.');
+    await changeStatus(x.id,'cancelled');
   });
 
   el.querySelectorAll('[data-delete]').forEach(b=>b.onclick=async()=>{
@@ -81,13 +86,12 @@ function renderList(){
     toast('Agendamento excluído definitivamente.');
   });
 
-  el.querySelectorAll('[data-vip]').forEach(b=>b.onclick=()=>makeVip(b.dataset.vip).catch(()=>toast('Erro ao salvar VIP.')));
+  el.querySelectorAll('[data-vip]').forEach(b=>b.onclick=()=>makeVip(b.dataset.vip));
   el.querySelectorAll('[data-edit]').forEach(b=>b.onclick=()=>edit(b.dataset.edit));
   el.querySelectorAll('[data-wa]').forEach(b=>b.onclick=()=>shareWhatsApp(b.dataset.wa));
   el.querySelectorAll('[data-status]').forEach(b=>b.onclick=async()=>{
     const x=items[b.dataset.id];if(!x)return;
-    await save({...x,status:b.dataset.status,updatedAt:Date.now()});
-    toast(b.dataset.status==='completed'?'Agendamento concluído.':'Marcado como falta.');
+    await changeStatus(x.id,'completed');
   });
 }
 function shareWhatsApp(id){
